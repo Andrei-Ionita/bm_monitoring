@@ -26,6 +26,10 @@ if "calls_made_critical" not in st.session_state:
 
 if "calls_made_warning" not in st.session_state:
     st.session_state["calls_made_warning"] = []
+    
+# Initialize session state for the phone number
+if "user_phone_number" not in st.session_state:
+    st.session_state["user_phone_number"] = ""  # Default number
 
 # Default thresholds
 default_thresholds = {
@@ -46,11 +50,11 @@ THRESHOLD_MFRR_DOWN = int(st.sidebar.text_input("Threshold mFRR Down (MWh)", def
 RATE_OF_CHANGE_THRESHOLD = int(st.sidebar.text_input("Rate of Change Threshold (MWh)", default_thresholds["RATE_OF_CHANGE_THRESHOLD"]) or default_thresholds["RATE_OF_CHANGE_THRESHOLD"])
 AFRR_SPIKE_THRESHOLD = int(st.sidebar.text_input("aFRR Spike Threshold (MWh)", default_thresholds["AFRR_SPIKE_THRESHOLD"]) or default_thresholds["AFRR_SPIKE_THRESHOLD"])
 
-# Sidebar: Dynamic Phone Number Input
-st.sidebar.header("Notification Settings")
+# Sidebar input linked to session state
 USER_PHONE_NUMBER = st.sidebar.text_input(
-    "Enter Phone Number for Alerts (with country code)", 
-    placeholder="+407XXXXXXXX" 
+    "Enter Phone Number for Alerts (with country code)",
+    value=st.session_state["user_phone_number"],  # Load from session state
+    placeholder="+407XXXXXXXX"
 )
 
 # Validate the phone number input
