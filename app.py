@@ -53,6 +53,7 @@ USER_PHONE_NUMBER = st.sidebar.text_input(
     placeholder="+40744250488",  # Example format for Romania
 )
 
+print(USER_PHONE_NUMBER)
 # Load environment variables from .env file
 load_dotenv()
 
@@ -60,7 +61,6 @@ load_dotenv()
 TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
 TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
 TWILIO_PHONE_NUMBER = os.getenv("TWILIO_PHONE_NUMBER")
-USER_PHONE_NUMBER = os.getenv("USER_PHONE_NUMBER")
 
 # Initialize Twilio client
 client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
