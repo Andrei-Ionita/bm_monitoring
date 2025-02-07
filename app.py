@@ -50,7 +50,6 @@ AFRR_SPIKE_THRESHOLD = int(st.sidebar.text_input("aFRR Spike Threshold (MWh)", d
 st.sidebar.header("Notification Settings")
 USER_PHONE_NUMBER = st.sidebar.text_input(
     "Enter Phone Number for Alerts (with country code)", 
-    value="+40744250488",  # Example default format for Romania
     placeholder="+407XXXXXXXX" 
 )
 
@@ -60,7 +59,7 @@ def is_valid_phone_number(phone_number):
 
 if not is_valid_phone_number(USER_PHONE_NUMBER):
     st.sidebar.error("Please enter a valid phone number with the country code.")
-    
+
 print(USER_PHONE_NUMBER)
 # Load environment variables from .env file
 load_dotenv()
