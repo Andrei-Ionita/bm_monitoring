@@ -46,6 +46,12 @@ THRESHOLD_MFRR_DOWN = int(st.sidebar.text_input("Threshold mFRR Down (MWh)", def
 RATE_OF_CHANGE_THRESHOLD = int(st.sidebar.text_input("Rate of Change Threshold (MWh)", default_thresholds["RATE_OF_CHANGE_THRESHOLD"]) or default_thresholds["RATE_OF_CHANGE_THRESHOLD"])
 AFRR_SPIKE_THRESHOLD = int(st.sidebar.text_input("aFRR Spike Threshold (MWh)", default_thresholds["AFRR_SPIKE_THRESHOLD"]) or default_thresholds["AFRR_SPIKE_THRESHOLD"])
 
+# Sidebar: Dynamic Phone Number Input
+st.sidebar.header("Notification Settings")
+USER_PHONE_NUMBER = st.sidebar.text_input(
+    "Enter Phone Number for Alerts (with country code)",
+    placeholder="+40744250488",  # Example format for Romania
+)
 
 # Load environment variables from .env file
 load_dotenv()
