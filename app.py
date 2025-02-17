@@ -10,6 +10,7 @@ import base64
 from twilio.rest import Client
 from dotenv import load_dotenv
 import os
+import asyncio
 
 # Page configuration for wide layout
 st.set_page_config(layout="wide")
@@ -26,7 +27,7 @@ if "calls_made_critical" not in st.session_state:
 
 if "calls_made_warning" not in st.session_state:
     st.session_state["calls_made_warning"] = []
-    
+
 # Initialize session state for the phone number
 if "user_phone_number" not in st.session_state:
     st.session_state["user_phone_number"] = ""  # Default number
@@ -53,9 +54,9 @@ AFRR_SPIKE_THRESHOLD = int(st.sidebar.text_input("aFRR Spike Threshold (MWh)", d
 # Sidebar input linked to session state
 USER_PHONE_NUMBER = st.sidebar.text_input(
     "Enter Phone Number for Alerts (with country code)",
-    value=st.session_state["user_phone_number"],  # Load from session state
+    value=st.session_state["user_phone_number"],  
     placeholder="+407XXXXXXXX"
-)
+).strip()  # Remove extra spaces
 
 # Validate the phone number input
 def is_valid_phone_number(phone_number):
@@ -64,7 +65,10 @@ def is_valid_phone_number(phone_number):
 if not is_valid_phone_number(USER_PHONE_NUMBER):
     st.sidebar.error("Please enter a valid phone number with the country code.")
 
-print(USER_PHONE_NUMBER)
+# Store the updated phone number in session state
+st.session_state["user_phone_number"] = USER_PHONE_NUMBER if is_valid_phone_number(USER_PHONE_NUMBER) else st.session_state["user_phone_number"]
+
+
 # Load environment variables from .env file
 load_dotenv()
 
@@ -84,13 +88,19 @@ def is_night_time():
 
 # Function to make a phone call for alarms
 def make_call(alarm_type, alarm_message):
+    to_phone = st.session_state["user_phone_number"]
+    
+    if not is_valid_phone_number(to_phone):
+        print(f"Invalid phone number: {to_phone}. Skipping call.")
+        return  # Prevent invalid calls
+
     try:
         eet_timezone = pytz.timezone('Europe/Bucharest')
         current_time_eet = datetime.now(eet_timezone).strftime("%Y-%m-%d %H:%M:%S")
 
         call = client.calls.create(
             twiml=f'<Response><Say>{alarm_type} alarm: {alarm_message} detected at {current_time_eet}. Please check the system immediately.</Say></Response>',
-            to=USER_PHONE_NUMBER,
+            to=to_phone,
             from_=TWILIO_PHONE_NUMBER
         )
         print(f"{alarm_type} call initiated successfully! Call SID: {call.sid}")
@@ -202,17 +212,26 @@ def check_balancing_alarms(df):
             message = f"⚠️ Warning: mFRR Down decreasing and aFRR Up increasing at {df.index[i]}"
             warning_alarms.append(message)
 
-        # Large drop in mFRR (rate of change)
-        rate_of_change_up = abs(current_mFRR_up - previous_mFRR_up)
-        rate_of_change_down = abs(current_mFRR_down - previous_mFRR_down)
+        # Rate of change in mFRR Up and Down
+        rate_of_change_up = current_mFRR_up - previous_mFRR_up
+        rate_of_change_down = current_mFRR_down - previous_mFRR_down
 
-        if rate_of_change_up >= RATE_OF_CHANGE_THRESHOLD:
-            message = f"⚠️ Warning: Sudden drop in mFRR Up by {rate_of_change_up} MWh at {df.index[i]}"
+        # Check for sudden increase or drop in mFRR Up
+        if abs(rate_of_change_up) >= RATE_OF_CHANGE_THRESHOLD:
+            if rate_of_change_up > 0:
+                message = f"⚠️ Warning: Sudden increase in mFRR Up by {rate_of_change_up} MWh at {df.index[i]}"
+            else:
+                message = f"⚠️ Warning: Sudden drop in mFRR Up by {abs(rate_of_change_up)} MWh at {df.index[i]}"
             warning_alarms.append(message)
 
-        if rate_of_change_down >= RATE_OF_CHANGE_THRESHOLD:
-            message = f"⚠️ Warning: Sudden drop in mFRR Down by {rate_of_change_down} MWh at {df.index[i]}"
+        # Check for sudden increase or drop in mFRR Down
+        if abs(rate_of_change_down) >= RATE_OF_CHANGE_THRESHOLD:
+            if rate_of_change_down > 0:
+                message = f"⚠️ Warning: Sudden increase in mFRR Down by {rate_of_change_down} MWh at {df.index[i]}"
+            else:
+                message = f"⚠️ Warning: Sudden drop in mFRR Down by {abs(rate_of_change_down)} MWh at {df.index[i]}"
             warning_alarms.append(message)
+
 
         # ================= Critical Alarms ====================================
         if previous_mFRR_up > 0 and current_mFRR_down > 0:
@@ -266,16 +285,18 @@ def check_balancing_alarms(df):
         new_critical_alarms = [alarm for alarm in critical_alarms if alarm not in st.session_state["calls_made_critical"]]
         if new_critical_alarms:
             for alarm in new_critical_alarms:
-                make_call("Critical", alarm)
-                st.session_state["calls_made_critical"].append(alarm)
+                if is_valid_phone_number(USER_PHONE_NUMBER):
+                    make_call("Critical", alarm)
+                st.session_state["calls_made_critical"].append(alarm)  # Add to call history
 
         # Check for new warning alarms and make a call if not during night hours
         if not is_night_time():
             new_warning_alarms = [alarm for alarm in warning_alarms if alarm not in st.session_state["calls_made_warning"]]
             if new_warning_alarms:
                 for alarm in new_warning_alarms:
-                    make_call("Warning", alarm)
-                    st.session_state["calls_made_warning"].append(alarm)
+                    if is_valid_phone_number(USER_PHONE_NUMBER):
+                        make_call("Warning", alarm)
+                    st.session_state["calls_made_warning"].append(alarm)  # Add to call history
 
     # Return combined list of alarms to display in the app
     return critical_alarms + warning_alarms
@@ -303,9 +324,10 @@ with col2:
     else:
         st.success("✅ No alarms triggered.")
 
-# Auto-refresh every 1 minute
-for seconds_left in range(60, 0, -1):  # 60 seconds = 1 minute
-    time.sleep(1)  # Countdown with a 1-second delay
+async def refresh_app(interval_seconds):
+    await asyncio.sleep(interval_seconds)
+    st.rerun()
 
-# Automatically rerun the app
-st.rerun()
+# Trigger the auto-refresh
+asyncio.run(refresh_app(60))  # Refresh every 60 seconds
+
