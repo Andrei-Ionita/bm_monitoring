@@ -12,6 +12,9 @@ from dotenv import load_dotenv
 import os
 import asyncio
 
+# Set the EET timezone
+eet_timezone = pytz.timezone('Europe/Bucharest')
+
 # Page configuration for wide layout
 st.set_page_config(layout="wide")
 
@@ -109,13 +112,17 @@ def make_call(alarm_type, alarm_message):
 
 # Function to fetch and convert data to EET
 def fetch_balancing_energy_data():
-    # Get current date and set midnight as the start of the day
-    today = datetime.now()
-    midnight_today = today.replace(hour=0, minute=0, second=0, microsecond=0)
+    # Get the current time in EET
+    now_eet = datetime.now(eet_timezone)
 
-    # Format dates in ISO 8601 format for the API
-    from_time = midnight_today.strftime("%Y-%m-%dT%H:%M:%S.000Z")
-    to_time = today.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    # Calculate midnight in EET and convert to UTC for the API request
+    midnight_today_eet = now_eet.replace(hour=0, minute=0, second=0, microsecond=0)
+    midnight_today_utc = midnight_today_eet.astimezone(pytz.UTC)
+    now_utc = now_eet.astimezone(pytz.UTC)
+
+    # Format dates in ISO 8601 format for the API in UTC
+    from_time = midnight_today_utc.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    to_time = now_utc.strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
     # Dynamic API request URL for the current day
     url = f"https://newmarkets.transelectrica.ro/usy-durom-publicreportg01/00121002500000000000000000000100/publicReport/activatedBalancingEnergyOverview?timeInterval.from={from_time}&timeInterval.to={to_time}&pageInfo.pageSize=3000"
@@ -133,7 +140,6 @@ def fetch_balancing_energy_data():
             utc_to = datetime.fromisoformat(item['timeInterval']['to'].replace('Z', '+00:00'))
 
             # Convert to EET
-            eet_timezone = pytz.timezone('Europe/Bucharest')
             eet_from = utc_from.astimezone(eet_timezone).strftime("%Y-%m-%d %H:%M:%S")
             eet_to = utc_to.astimezone(eet_timezone).strftime("%Y-%m-%d %H:%M:%S")
 
@@ -334,14 +340,18 @@ def check_balancing_alarms(df):
     # Return combined list of alarms to display in the app
     return critical_alarms + warning_alarms, all_alarms
 
+# Define the EET timezone
+eet_timezone = pytz.timezone('Europe/Bucharest')
+
 # Layout for the app with columns
 col1, col2 = st.columns([2, 1])  # Table takes 2/3 width, alarms take 1/3 width
 
 with col1:
     st.subheader("Activation Energy Table")
-     # Display current time and update info
-    current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    st.info(f"Last updated: **{current_time}**")
+    # Display current time and update info
+    # Get the current time in EET for the "Last updated" information
+    current_time_eet = datetime.now().astimezone(eet_timezone).strftime("%Y-%m-%d %H:%M:%S")
+    st.info(f"Last updated: **{current_time_eet}**")
     data = fetch_balancing_energy_data()
     if not data.empty:
         st.write(data)
