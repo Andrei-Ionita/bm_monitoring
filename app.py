@@ -112,51 +112,85 @@ def make_call(alarm_type, alarm_message):
 
 # Function to fetch and convert data to EET
 def fetch_balancing_energy_data():
-    # Get the current time in EET
-    now_eet = datetime.now(eet_timezone)
+    """Fetch activated balancing energy data, convert timestamps to EET, and filter only today's data."""
 
-    # Calculate midnight in EET and convert to UTC for the API request
-    midnight_today_eet = now_eet.replace(hour=0, minute=0, second=0, microsecond=0)
-    midnight_today_utc = midnight_today_eet.astimezone(pytz.UTC)
-    now_utc = now_eet.astimezone(pytz.UTC)
+    # Define timezone
+    eet_timezone = pytz.timezone('Europe/Bucharest')
+    
+    # Get current date in **EET** and set midnight as start of the day
+    eet_now = datetime.now(eet_timezone)
+    eet_midnight = eet_now.replace(hour=0, minute=0, second=0, microsecond=0)
 
-    # Format dates in ISO 8601 format for the API in UTC
-    from_time = midnight_today_utc.strftime("%Y-%m-%dT%H:%M:%S.000Z")
-    to_time = now_utc.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    # Convert midnight EET to UTC (since API operates in UTC)
+    utc_midnight = eet_midnight.astimezone(pytz.utc)
 
-    # Dynamic API request URL for the current day
+    # Set API time range: Fetch from **EET midnight (converted to UTC) until now**
+    from_time = utc_midnight.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    to_time = (utc_midnight + timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+    # Debug: Print time range used for fetching data
+    print(f"Fetching data from {from_time} to {to_time} (UTC)")
+
+    # API Request
     url = f"https://newmarkets.transelectrica.ro/usy-durom-publicreportg01/00121002500000000000000000000100/publicReport/activatedBalancingEnergyOverview?timeInterval.from={from_time}&timeInterval.to={to_time}&pageInfo.pageSize=3000"
-
+    
     response = requests.get(url)
-    if response.status_code == 200:
-        data = response.json()
-        items = data["itemList"]
+    if response.status_code != 200:
+        st.error(f"Failed to fetch data. Status code: {response.status_code}")
+        return pd.DataFrame()
 
-        # Process rows and convert timestamps
-        rows = []
-        for item in items:
+    # Parse JSON response
+    data = response.json()
+    items = data.get("itemList", [])
+
+    # Debug: Print number of fetched records
+    print(f"Fetched {len(items)} records from API.")
+
+    # Process and convert timestamps
+    rows = []
+    for item in items:
+        try:
             # Convert timestamps from UTC to EET
             utc_from = datetime.fromisoformat(item['timeInterval']['from'].replace('Z', '+00:00'))
             utc_to = datetime.fromisoformat(item['timeInterval']['to'].replace('Z', '+00:00'))
 
-            # Convert to EET
-            eet_from = utc_from.astimezone(eet_timezone).strftime("%Y-%m-%d %H:%M:%S")
-            eet_to = utc_to.astimezone(eet_timezone).strftime("%Y-%m-%d %H:%M:%S")
+            eet_from = utc_from.astimezone(eet_timezone)
+            eet_to = utc_to.astimezone(eet_timezone)
 
-            # Extract energy values
-            afrr_up = item.get("aFRR_Up", 0)
-            afrr_down = item.get("aFRR_Down", 0)
-            mfrr_up = item.get("mFRR_Up", 0)
-            mfrr_down = item.get("mFRR_Down", 0)
+            # Debugging - Print all fetched rows
+            print(f"Processing: {eet_from} - {eet_to}")
 
-            # Append the processed row
-            rows.append([f"{eet_from} - {eet_to}", afrr_up, afrr_down, mfrr_up, mfrr_down])
+            # Filter out rows **before today's midnight (EET)**
+            if eet_from < eet_midnight:
+                print(f"Skipping {eet_from} - before today’s midnight")
+                continue  # Skip records from the previous day
 
-        # Create DataFrame
-        return pd.DataFrame(rows, columns=["Time Period (EET)", "aFRR Up (MWh)", "aFRR Down (MWh)", "mFRR Up (MWh)", "mFRR Down (MWh)"])
-    else:
-        st.error(f"Failed to fetch data. Status code: {response.status_code}")
-        return pd.DataFrame()
+            # Store in formatted string
+            time_period = f"{eet_from.strftime('%Y-%m-%d %H:%M:%S')} - {eet_to.strftime('%Y-%m-%d %H:%M:%S')}"
+            
+            # Extract energy values (default to 0 if missing)
+            afrr_up = item.get("aFRR_Up", 0) or 0
+            afrr_down = item.get("aFRR_Down", 0) or 0
+            mfrr_up = item.get("mFRR_Up", 0) or 0
+            mfrr_down = item.get("mFRR_Down", 0) or 0
+
+            # Debugging - Log all added records
+            print(f"ADDING: {time_period} | aFRR_Up: {afrr_up}, aFRR_Down: {afrr_down}, mFRR_Up: {mfrr_up}, mFRR_Down: {mfrr_down}")
+
+            # Store processed row
+            rows.append([time_period, afrr_up, afrr_down, mfrr_up, mfrr_down])
+
+        except Exception as e:
+            print(f"Error processing record: {e}")
+
+    # Convert to DataFrame
+    df = pd.DataFrame(rows, columns=["Time Period (EET)", "aFRR Up (MWh)", "aFRR Down (MWh)", "mFRR Up (MWh)", "mFRR Down (MWh)"])
+    
+    # Debug: Print first few rows of the dataframe
+    print("Processed DataFrame:")
+    print(df.head())
+
+    return df
 
 # Function to detect and handle alarms
 def check_balancing_alarms(df):
