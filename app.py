@@ -31,6 +31,10 @@ if "calls_made_critical" not in st.session_state:
 if "calls_made_warning" not in st.session_state:
     st.session_state["calls_made_warning"] = []
 
+# Ensure all alarms persist across updates
+if "all_alarms" not in st.session_state:
+    st.session_state["all_alarms"] = []
+
 # Initialize session state for the phone number
 if "user_phone_number" not in st.session_state:
     st.session_state["user_phone_number"] = ""  # Default number
@@ -324,13 +328,27 @@ def check_balancing_alarms(df):
             warning_alarms.append(message)
             all_alarms.append((df.index[i], message, "Warning"))
 
-        # Check for mFRR closing (no mFRR update for 9+ minutes)
-        latest_timestamp = datetime.strptime(df.iloc[-1]["Time Period (EET)"].split(" - ")[1], "%Y-%m-%d %H:%M:%S")
-        time_diff = current_time - latest_timestamp
-        if (df.iloc[-1]["mFRR Up (MWh)"] > 0 or df.iloc[-1]["mFRR Down (MWh)"] > 0) and time_diff > timedelta(minutes=6):
-            message = f"🚨 Critical: No new mFRR update for {time_diff.seconds // 60} minutes. The next interval will rely solely on aFRR."
-            critical_alarms.append((message))
-            all_alarms.append((df.index[i], message, "Critical"))
+        # mFRR deactivation when it is active but there is no update when the difference between the current time and the beggining of the next quarter is less than 9 minutes
+        if not df.empty:
+            # Get the latest recorded interval's end time
+            latest_timestamp = datetime.strptime(df.iloc[-1]["Time Period (EET)"].split(" - ")[1], "%Y-%m-%d %H:%M:%S")
+
+            # Calculate the next expected quarter-hour interval
+            expected_next_interval = eet_timezone.localize(latest_timestamp + timedelta(minutes=15))
+
+            # Get the current time in EET
+            current_time = datetime.now(eet_timezone)
+
+            # Calculate the time difference between current time and expected next interval
+            missing_time = (current_time - expected_next_interval).total_seconds() / 60  # Convert to minutes
+
+            # If more than 9 minutes have passed and we still don't have a new row
+            if missing_time > 9 and (df.iloc[-1]["mFRR Up (MWh)"] > 0 or df.iloc[-1]["mFRR Down (MWh)"] > 0):
+                message = f"🚨 Critical: No new mFRR update for {int(missing_time)} minutes. The next interval will rely solely on aFRR."
+
+                # Ensure alarm is not duplicated
+                if message not in st.session_state["all_alarms"]:
+                    st.session_state["all_alarms"].append((latest_timestamp, message, "Critical"))
 
         # Large spikes in aFRR
         aFRR_spike_up = abs(current_aFRR_up - previous_aFRR_up)
@@ -346,23 +364,13 @@ def check_balancing_alarms(df):
             critical_alarms.append(message)
             all_alarms.append((df.index[i], message, "Critical"))
 
-        # Check for mFRR closing (no mFRR update for 9+ minutes)
-        latest_timestamp = datetime.strptime(df.iloc[-1]["Time Period (EET)"].split(" - ")[1], "%Y-%m-%d %H:%M:%S")
-        time_diff = current_time - latest_timestamp
-
-        # Check if there was mFRR activation in the latest interval
-        if (df.iloc[-1]["mFRR Up (MWh)"] > 0 or df.iloc[-1]["mFRR Down (MWh)"] > 0) and time_diff > timedelta(minutes=6):
-            message = f"🚨 Critical: No new mFRR update for {time_diff.seconds // 60} minutes. Anticipation of mFRR closing detected at {latest_timestamp}. The next interval will rely solely on aFRR."
-            critical_alarms.append(message)
-            all_alarms.append((df.index[i], message, "Critical"))
-
         # Check for new critical alarms and make a call if any
         new_critical_alarms = [alarm for alarm in critical_alarms if alarm not in st.session_state["calls_made_critical"]]
         if new_critical_alarms:
             for alarm in new_critical_alarms:
                 if is_valid_phone_number(USER_PHONE_NUMBER):
                     make_call("Critical", alarm)
-                st.session_state["calls_made_critical"].append(alarm)  # Add to call history
+                    st.session_state["calls_made_critical"].append(alarm)  # Store it immediately
 
         # Check for new warning alarms and make a call if not during night hours
         if not is_night_time():
@@ -371,10 +379,16 @@ def check_balancing_alarms(df):
                 for alarm in new_warning_alarms:
                     if is_valid_phone_number(USER_PHONE_NUMBER):
                         make_call("Warning", alarm)
-                    st.session_state["calls_made_warning"].append(alarm)  # Add to call history
+                        st.session_state["calls_made_warning"].append(alarm)  # Store it immediately
 
-    # Return combined list of alarms to display in the app
-    return critical_alarms + warning_alarms, all_alarms
+
+    # Append only new alarms to the stored session state
+    for alarm in all_alarms:
+        if alarm not in st.session_state["all_alarms"]:
+            st.session_state["all_alarms"].append(alarm)
+
+    # Return stored alarms to display in UI
+    return st.session_state["all_alarms"]
 
 # Define the EET timezone
 eet_timezone = pytz.timezone('Europe/Bucharest')
@@ -396,9 +410,10 @@ with col1:
 
 with col2:
     st.subheader("Alarms Triggered")
-    all_alarms = check_balancing_alarms(data)[1]
-    # Sort alarms chronologically by the first element of the tuple (timestamp)
-    all_alarms.sort(key=lambda x: x[0], reverse=True)
+    all_alarms = check_balancing_alarms(data)
+
+    # Sort alarms chronologically before displaying
+    st.session_state["all_alarms"].sort(key=lambda x: x[0], reverse=True)
     if all_alarms:
         for timestamp, message, alarm_type in all_alarms:
             if alarm_type == "Critical":
