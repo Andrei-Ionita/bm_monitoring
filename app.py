@@ -325,9 +325,12 @@ def check_balancing_alarms(df):
             all_alarms.append((df.index[i], message, "Warning"))
 
         # Check for mFRR closing (no mFRR update for 9+ minutes)
-        if (previous_mFRR_up > 0 or previous_mFRR_down > 0) and time_diff > timedelta(minutes=9):
-            message = f"🚨 Critical: No new mFRR update for {time_diff.seconds // 60} minutes. Anticipation of mFRR closing detected at {latest_timestamp}. The next interval may rely solely on aFRR."
-            critical_alarms.append(message)
+        latest_timestamp = datetime.strptime(df.iloc[-1]["Time Period (EET)"].split(" - ")[1], "%Y-%m-%d %H:%M:%S")
+        time_diff = current_time - latest_timestamp
+        if (df.iloc[-1]["mFRR Up (MWh)"] > 0 or df.iloc[-1]["mFRR Down (MWh)"] > 0) and time_diff > timedelta(minutes=6):
+            message = f"🚨 Critical: No new mFRR update for {time_diff.seconds // 60} minutes. The next interval will rely solely on aFRR."
+            critical_alarms.append((message))
+            all_alarms.append((df.index[i], message, "Critical"))
 
         # Large spikes in aFRR
         aFRR_spike_up = abs(current_aFRR_up - previous_aFRR_up)
