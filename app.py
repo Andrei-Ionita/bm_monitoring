@@ -347,15 +347,14 @@ def check_balancing_alarms(df):
             all_alarms.append((df.index[i], message, "Critical"))
 
         # Check for mFRR closing (no mFRR update for 9+ minutes)
-        if not df.empty:
-            latest_timestamp = datetime.strptime(df.iloc[-1]["Time Period (EET)"].split(" - ")[1], "%Y-%m-%d %H:%M:%S")
-            time_diff = current_time - latest_timestamp
+        latest_timestamp = datetime.strptime(df.iloc[-1]["Time Period (EET)"].split(" - ")[1], "%Y-%m-%d %H:%M:%S")
+        time_diff = current_time - latest_timestamp
 
-            # Check if there was mFRR activation in the latest interval
-            if (df.iloc[-1]["mFRR Up (MWh)"] > 0 or df.iloc[-1]["mFRR Down (MWh)"] > 0) and time_diff > timedelta(minutes=9):
-                message = f"🚨 Critical: No new mFRR update for {time_diff.seconds // 60} minutes. Anticipation of mFRR closing detected at {latest_timestamp}. The next interval may rely solely on aFRR."
-                critical_alarms.append(message)
-                all_alarms.append((df.index[i], message, "Critical"))
+        # Check if there was mFRR activation in the latest interval
+        if (df.iloc[-1]["mFRR Up (MWh)"] > 0 or df.iloc[-1]["mFRR Down (MWh)"] > 0) and time_diff > timedelta(minutes=6):
+            message = f"🚨 Critical: No new mFRR update for {time_diff.seconds // 60} minutes. Anticipation of mFRR closing detected at {latest_timestamp}. The next interval will rely solely on aFRR."
+            critical_alarms.append(message)
+            all_alarms.append((df.index[i], message, "Critical"))
 
         # Check for new critical alarms and make a call if any
         new_critical_alarms = [alarm for alarm in critical_alarms if alarm not in st.session_state["calls_made_critical"]]
