@@ -364,34 +364,44 @@ def check_balancing_alarms(df):
                 all_alarms.append((df.index[i], message, "Warning"))
 
         # mFRR deactivation when it is active but there is no update when the difference between the current time and the beggining of the next quarter is less than 9 minutes
-        if not df.empty:
-            # Get the latest available timestamp in EET
+        # Ensure we have enough data before checking
+        if len(df) >= 2:
+            # Get the latest two timestamps in EET
             latest_timestamp = datetime.strptime(df.iloc[-1]["Time Period (EET)"].split(" - ")[1], "%Y-%m-%d %H:%M:%S")
             latest_timestamp = eet_timezone.localize(latest_timestamp)
 
-            # Compute the next expected interval start time (15-minute steps)
+            previous_timestamp = datetime.strptime(df.iloc[-2]["Time Period (EET)"].split(" - ")[1], "%Y-%m-%d %H:%M:%S")
+            previous_timestamp = eet_timezone.localize(previous_timestamp)
+
+            # Compute the next expected interval start time
             expected_next_interval = latest_timestamp + timedelta(minutes=15)
 
             # Get the current time in EET
             current_time = datetime.now(eet_timezone)
 
-            # Calculate the time difference between the expected interval and current time
-            time_diff = expected_next_interval - current_time
-            missing_time = time_diff.total_seconds() / 60  # Convert to minutes
+            # Calculate time difference between expected interval and current time
+            missing_time = (expected_next_interval - current_time).total_seconds() / 60
 
             print(f"latest_timestamp (EET): {latest_timestamp} | tzinfo: {latest_timestamp.tzinfo}")
             print(f"expected_next_interval (EET): {expected_next_interval} | tzinfo: {expected_next_interval.tzinfo}")
             print(f"current_time (EET): {current_time} | tzinfo: {current_time.tzinfo}")
             print(f"Missing time before next quarter: {missing_time:.2f} minutes")
 
-            # Check if there was an mFRR activation and we are in the 9-minute critical window
-            if (df.iloc[-1]["mFRR Up (MWh)"] > 0 or df.iloc[-1]["mFRR Down (MWh)"] > 0) and missing_time <= 9:
+            # Check if there was mFRR activation in the last **two intervals** but no update for the next one
+            last_mFRR_active = df.iloc[-1]["mFRR Up (MWh)"] > 0 or df.iloc[-1]["mFRR Down (MWh)"] > 0
+            prev_mFRR_active = df.iloc[-2]["mFRR Up (MWh)"] > 0 or df.iloc[-2]["mFRR Down (MWh)"] > 0
+
+            # If missing_time <= 9 minutes OR the next interval is already ongoing, trigger alarm
+            if (last_mFRR_active or prev_mFRR_active) and (missing_time <= 9 or current_time >= expected_next_interval):
                 message = (f"🚨 Critical: No new mFRR update detected for the next interval starting at {expected_next_interval}. "
                            f"The next interval may rely solely on aFRR.")
+
+                # Prevent duplicates
                 if message not in critical_alarms:
                     critical_alarms.append(message)
                     all_alarms.append((df.index[-1], message, "Critical"))
                     print(f"Triggering Critical Alarm: {message}")
+
 
         # Large spikes in aFRR
         aFRR_spike_up = abs(current_aFRR_up - previous_aFRR_up)
