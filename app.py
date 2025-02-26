@@ -233,13 +233,15 @@ def check_balancing_alarms(df):
 
         if time_diff > timedelta(minutes=20):
             message = f"🚨 Critical: No new data received for {time_diff.seconds // 60} minutes (last update at {latest_timestamp})."
-            critical_alarms.append(message)
-            all_alarms.append((df.index[i], message, "Critical"))
+            if message not in critical_alarms:
+                critical_alarms.append(message)
+                all_alarms.append((df.index[i], message, "Critical"))
 
     else:
         message = "🚨 Critical: No data available from the server."
-        critical_alarms.append(message)
-        all_alarms.append((df.index[i], message, "Critical"))
+        if message not in critical_alarms:
+            critical_alarms.append(message)
+            all_alarms.append((df.index[i], message, "Critical"))
 
     for i in range(1, len(df)):
 
@@ -267,27 +269,31 @@ def check_balancing_alarms(df):
         if previous_total_up > previous_total_down and current_total_down > current_total_up:
             message = (f"🚨 Critical: System switched from upward total activation to downward "
                        f"total activation at {df.index[i]}")
-            print(f"Triggering Critical Alarm: {message}")
-            critical_alarms.append(message)
-            all_alarms.append((df.index[i], message, "Critical"))
+            if message not in critical_alarms:
+                print(f"Triggering Critical Alarm: {message}")
+                critical_alarms.append(message)
+                all_alarms.append((df.index[i], message, "Critical"))
 
         if previous_total_down > previous_total_up and current_total_up > current_total_down:
             message = (f"🚨 Critical: System switched from downward total activation to upward "
                        f"total activation at {df.index[i]}")
-            print(f"Triggering Critical Alarm: {message}")
-            critical_alarms.append(message)
-            all_alarms.append((df.index[i], message, "Critical"))
+            if message not in critical_alarms:
+                print(f"Triggering Critical Alarm: {message}")
+                critical_alarms.append(message)
+                all_alarms.append((df.index[i], message, "Critical"))
 
         # ================= Warning Alarms ============================================
         if current_mFRR_up < previous_mFRR_up and current_aFRR_down > previous_aFRR_down:
             message = f"⚠️ Warning: mFRR Up decreasing and aFRR Down increasing at {df.index[i]}"
-            warning_alarms.append(message)
-            all_alarms.append((df.index[i], message, "Warning"))
+            if message not in warning_alarms:
+                warning_alarms.append(message)
+                all_alarms.append((df.index[i], message, "Warning"))
 
         if current_mFRR_down < previous_mFRR_down and current_aFRR_up > previous_aFRR_up:
             message = f"⚠️ Warning: mFRR Down decreasing and aFRR Up increasing at {df.index[i]}"
-            warning_alarms.append(message)
-            all_alarms.append((df.index[i], message, "Warning"))
+            if message not in warning_alarms:
+                warning_alarms.append(message)
+                all_alarms.append((df.index[i], message, "Warning"))
 
         # Rate of change in mFRR Up and Down
         rate_of_change_up = current_mFRR_up - previous_mFRR_up
@@ -299,8 +305,9 @@ def check_balancing_alarms(df):
                 message = f"⚠️ Warning: Sudden increase in mFRR Up by {rate_of_change_up} MWh at {df.index[i]}"
             else:
                 message = f"⚠️ Warning: Sudden drop in mFRR Up by {abs(rate_of_change_up)} MWh at {df.index[i]}"
-            warning_alarms.append(message)
-            all_alarms.append((df.index[i], message, "Warning"))
+            if message not in warning_alarms:
+                warning_alarms.append(message)
+                all_alarms.append((df.index[i], message, "Warning"))
 
         # Check for sudden increase or drop in mFRR Down
         if abs(rate_of_change_down) >= RATE_OF_CHANGE_THRESHOLD:
@@ -308,46 +315,53 @@ def check_balancing_alarms(df):
                 message = f"⚠️ Warning: Sudden increase in mFRR Down by {rate_of_change_down} MWh at {df.index[i]}"
             else:
                 message = f"⚠️ Warning: Sudden drop in mFRR Down by {abs(rate_of_change_down)} MWh at {df.index[i]}"
-            warning_alarms.append(message)
-            all_alarms.append((df.index[i], message, "Warning"))
+            if message not in warning_alarms:
+                warning_alarms.append(message)
+                all_alarms.append((df.index[i], message, "Warning"))
 
 
         # ================= Critical Alarms ====================================
         if previous_mFRR_up > 0 and current_mFRR_down > 0:
             message = f"🚨 Critical: System switched from deficit to surplus at {df.index[i]}"
-            critical_alarms.append(message)
-            all_alarms.append((df.index[i], message, "Critical"))
+            if message not in critical_alarms:
+                critical_alarms.append(message)
+                all_alarms.append((df.index[i], message, "Critical"))
 
         if previous_mFRR_down > 0 and current_mFRR_up > 0:
             message = f"🚨 Critical: System switched from surplus to deficit at {df.index[i]}"
-            critical_alarms.append(message)
-            all_alarms.append((df.index[i], message, "Critical"))
+            if message not in critical_alarms:
+                critical_alarms.append(message)
+                all_alarms.append((df.index[i], message, "Critical"))
 
         # Opposite aFRR activation (aFRR spike in opposite direction)
         if previous_aFRR_up > previous_aFRR_down and previous_aFRR_up > THRESHOLD_AFRR_UP:
             if current_aFRR_down > previous_aFRR_down and current_aFRR_down > THRESHOLD_AFRR_DOWN:
                 message = f"🚨 Critical: Sudden spike in aFRR Down at {df.index[i]}"
-                critical_alarms.append(message)
-                all_alarms.append((df.index[i], message, "Critical"))
+                if message not in critical_alarms:
+                    critical_alarms.append(message)
+                    all_alarms.append((df.index[i], message, "Critical"))
 
         if previous_aFRR_down > previous_aFRR_up and previous_aFRR_down > THRESHOLD_AFRR_DOWN:
             if current_aFRR_up > previous_aFRR_up and current_aFRR_up > THRESHOLD_AFRR_UP:
                 message = f"🚨 Critical: Sudden spike in aFRR Up at {df.index[i]}"
-                critical_alarms.append(message)
-                all_alarms.append((df.index[i], message, "Critical"))
+                if message not in critical_alarms:
+                    critical_alarms.append(message)
+                    all_alarms.append((df.index[i], message, "Critical"))
 
           # ================= aFRR-Only Imbalance Detection ===========================
 
         # aFRR-only dominance and system direction shift
         if previous_aFRR_up > previous_aFRR_down and current_aFRR_down > current_aFRR_up:
             message = f"⚠️ Warning: aFRR switched from Up to Down dominance at {df.index[i]}"
-            warning_alarms.append(message)
-            all_alarms.append((df.index[i], message, "Warning"))
+            if message not in warning_alarms:
+                warning_alarms.append(message)
+                all_alarms.append((df.index[i], message, "Warning"))
 
         if previous_aFRR_down > previous_aFRR_up and current_aFRR_up > current_aFRR_down:
             message = f"⚠️ Warning: aFRR switched from Down to Up dominance at {df.index[i]}"
-            warning_alarms.append(message)
-            all_alarms.append((df.index[i], message, "Warning"))
+            if message not in warning_alarms:
+                warning_alarms.append(message)
+                all_alarms.append((df.index[i], message, "Warning"))
 
         # mFRR deactivation when it is active but there is no update when the difference between the current time and the beggining of the next quarter is less than 9 minutes
         if not df.empty:
@@ -374,9 +388,10 @@ def check_balancing_alarms(df):
             if (df.iloc[-1]["mFRR Up (MWh)"] > 0 or df.iloc[-1]["mFRR Down (MWh)"] > 0) and missing_time <= 9:
                 message = (f"🚨 Critical: No new mFRR update detected for the next interval starting at {expected_next_interval}. "
                            f"The next interval may rely solely on aFRR.")
-                critical_alarms.append(message)
-                all_alarms.append((df.index[-1], message, "Critical"))
-                print(f"Triggering Critical Alarm: {message}")
+                if message not in critical_alarms:
+                    critical_alarms.append(message)
+                    all_alarms.append((df.index[-1], message, "Critical"))
+                    print(f"Triggering Critical Alarm: {message}")
 
         # Large spikes in aFRR
         aFRR_spike_up = abs(current_aFRR_up - previous_aFRR_up)
@@ -384,13 +399,15 @@ def check_balancing_alarms(df):
 
         if aFRR_spike_up >= AFRR_SPIKE_THRESHOLD:
             message = f"🚨 Critical: Sudden large spike in aFRR Up by {aFRR_spike_up} MWh at {df.index[i]}"
-            critical_alarms.append(message)
-            all_alarms.append((df.index[i], message, "Critical"))
+            if message not in critical_alarms:
+                critical_alarms.append(message)
+                all_alarms.append((df.index[i], message, "Critical"))
 
         if aFRR_spike_down >= AFRR_SPIKE_THRESHOLD:
             message = f"🚨 Critical: Sudden large spike in aFRR Down by {aFRR_spike_down} MWh at {df.index[i]}"
-            critical_alarms.append(message)
-            all_alarms.append((df.index[i], message, "Critical"))
+            if message not in critical_alarms:
+                critical_alarms.append(message)
+                all_alarms.append((df.index[i], message, "Critical"))
 
         # Check for new critical alarms and make a call if any
         new_critical_alarms = [alarm for alarm in critical_alarms if alarm not in st.session_state["calls_made_critical"]]
@@ -399,7 +416,7 @@ def check_balancing_alarms(df):
                 if is_valid_phone_number(USER_PHONE_NUMBER):
                     alarm_id = df.index[-1]  # Ensure an alarm ID is passed
                     make_call("Critical", alarm, alarm_id)
-                    st.session_state["calls_made_critical"].append(alarm)
+                    st.session_state["calls_made_critical"].append(alarm)  # Store it immediately
 
         # Check for new warning alarms and make a call if not during night hours
         if not is_night_time():
