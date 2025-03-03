@@ -367,10 +367,10 @@ def check_balancing_alarms(df):
         # Ensure we have enough data before checking
         if len(df) >= 2:
             # Get the latest two timestamps in EET
-            latest_timestamp = datetime.strptime(df.iloc[-1]["Time Period (EET)"].split(" - ")[1], "%Y-%m-%d %H:%M:%S")
+            latest_timestamp = datetime.strptime(df.iloc[-1]["Time Period (EET)"].split(" - ")[0], "%Y-%m-%d %H:%M:%S")
             latest_timestamp = eet_timezone.localize(latest_timestamp)
 
-            previous_timestamp = datetime.strptime(df.iloc[-2]["Time Period (EET)"].split(" - ")[1], "%Y-%m-%d %H:%M:%S")
+            previous_timestamp = datetime.strptime(df.iloc[-2]["Time Period (EET)"].split(" - ")[0], "%Y-%m-%d %H:%M:%S")
             previous_timestamp = eet_timezone.localize(previous_timestamp)
 
             # Compute the next expected interval start time
