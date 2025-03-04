@@ -472,7 +472,11 @@ with col2:
     all_alarms = check_balancing_alarms(data)
 
     # Sort alarms chronologically before displaying
-    st.session_state["all_alarms"].sort(key=lambda x: x[0] if isinstance(x[0], (int, str)) else "", reverse=True)
+    # Ensure all alarms have a valid ID before sorting
+    st.session_state["all_alarms"].sort(
+        key=lambda x: (x[0] if isinstance(x[0], (int, float)) else float('-inf')), reverse=True
+    )
+
     if all_alarms:
         for timestamp, message, alarm_type in all_alarms:
             if alarm_type == "Critical":
