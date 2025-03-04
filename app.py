@@ -396,10 +396,13 @@ def check_balancing_alarms(df):
                 message = (f"🚨 Critical: No new mFRR update detected for the next interval starting at {expected_next_interval}. "
                            f"The next interval may rely solely on aFRR.")
 
+                # Generate an alarm ID using the expected interval timestamp
+                alarm_id = f"mFRR_missing_{expected_next_interval.strftime('%Y-%m-%d %H:%M')}"
+
                 # Prevent duplicates
                 if message not in critical_alarms:
                     critical_alarms.append(message)
-                    all_alarms.append((df.index[-1], message, "Critical"))
+                    all_alarms.append((alarm_id, message, "Critical"))
                     print(f"Triggering Critical Alarm: {message}")
 
 
@@ -424,7 +427,7 @@ def check_balancing_alarms(df):
         if new_critical_alarms:
             for alarm in new_critical_alarms:
                 if is_valid_phone_number(USER_PHONE_NUMBER):
-                    alarm_id = df.index[-1]  # Ensure an alarm ID is passed
+                    alarm_id = alarm[0]  # Ensure an alarm ID is passed
                     make_call("Critical", alarm, alarm_id)
                     st.session_state["calls_made_critical"].append(alarm)  # Store it immediately
 
@@ -434,7 +437,7 @@ def check_balancing_alarms(df):
             if new_warning_alarms:
                 for alarm in new_warning_alarms:
                     if is_valid_phone_number(USER_PHONE_NUMBER):
-                        alarm_id = df.index[-1]
+                        alarm_id = alarm[0]
                         make_call("Warning", alarm, alarm_id)
                         st.session_state["calls_made_warning"].append(alarm)
 
