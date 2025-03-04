@@ -233,15 +233,23 @@ def check_balancing_alarms(df):
 
         if time_diff > timedelta(minutes=20):
             message = f"🚨 Critical: No new data received for {time_diff.seconds // 60} minutes (last update at {latest_timestamp})."
+            alarm_id = datetime.strptime(df.iloc[i]["Time Period (EET)"].split(" - ")[0], "%Y-%m-%d %H:%M:%S")
+            alarm_id = eet_timezone.localize(alarm_id).timestamp()  # Convert to timestamp
+            all_alarms.append((alarm_id, message, "Critical"))
+
             if message not in critical_alarms:
                 critical_alarms.append(message)
-                all_alarms.append((df.index[i], message, "Critical"))
+                alarm_id = datetime.strptime(df.iloc[i]["Time Period (EET)"].split(" - ")[0], "%Y-%m-%d %H:%M:%S")
+                alarm_id = eet_timezone.localize(alarm_id).timestamp()  # Convert to timestamp
+                all_alarms.append((alarm_id, message, "Critical"))
 
     else:
         message = "🚨 Critical: No data available from the server."
         if message not in critical_alarms:
             critical_alarms.append(message)
-            all_alarms.append((df.index[i], message, "Critical"))
+            alarm_id = datetime.strptime(df.iloc[i]["Time Period (EET)"].split(" - ")[0], "%Y-%m-%d %H:%M:%S")
+            alarm_id = eet_timezone.localize(alarm_id).timestamp()  # Convert to timestamp
+            all_alarms.append((alarm_id, message, "Critical"))
 
     for i in range(1, len(df)):
 
@@ -272,7 +280,9 @@ def check_balancing_alarms(df):
             if message not in critical_alarms:
                 print(f"Triggering Critical Alarm: {message}")
                 critical_alarms.append(message)
-                all_alarms.append((df.index[i], message, "Critical"))
+                alarm_id = datetime.strptime(df.iloc[i]["Time Period (EET)"].split(" - ")[0], "%Y-%m-%d %H:%M:%S")
+                alarm_id = eet_timezone.localize(alarm_id).timestamp()  # Convert to timestamp
+                all_alarms.append((alarm_id, message, "Critical"))
 
         if previous_total_down > previous_total_up and current_total_up > current_total_down:
             message = (f"🚨 Critical: System switched from downward total activation to upward "
@@ -280,20 +290,26 @@ def check_balancing_alarms(df):
             if message not in critical_alarms:
                 print(f"Triggering Critical Alarm: {message}")
                 critical_alarms.append(message)
-                all_alarms.append((df.index[i], message, "Critical"))
+                alarm_id = datetime.strptime(df.iloc[i]["Time Period (EET)"].split(" - ")[0], "%Y-%m-%d %H:%M:%S")
+                alarm_id = eet_timezone.localize(alarm_id).timestamp()  # Convert to timestamp
+                all_alarms.append((alarm_id, message, "Critical"))
 
         # ================= Warning Alarms ============================================
         if current_mFRR_up < previous_mFRR_up and current_aFRR_down > previous_aFRR_down:
             message = f"⚠️ Warning: mFRR Up decreasing and aFRR Down increasing at {df.index[i]}"
             if message not in warning_alarms:
                 warning_alarms.append(message)
-                all_alarms.append((df.index[i], message, "Warning"))
+                alarm_id = datetime.strptime(df.iloc[i]["Time Period (EET)"].split(" - ")[0], "%Y-%m-%d %H:%M:%S")
+                alarm_id = eet_timezone.localize(alarm_id).timestamp()  # Convert to timestamp
+                all_alarms.append((alarm_id, message, "Warning"))
 
         if current_mFRR_down < previous_mFRR_down and current_aFRR_up > previous_aFRR_up:
             message = f"⚠️ Warning: mFRR Down decreasing and aFRR Up increasing at {df.index[i]}"
             if message not in warning_alarms:
                 warning_alarms.append(message)
-                all_alarms.append((df.index[i], message, "Warning"))
+                alarm_id = datetime.strptime(df.iloc[i]["Time Period (EET)"].split(" - ")[0], "%Y-%m-%d %H:%M:%S")
+                alarm_id = eet_timezone.localize(alarm_id).timestamp()  # Convert to timestamp
+                all_alarms.append((alarm_id, message, "Warning"))
 
         # Rate of change in mFRR Up and Down
         rate_of_change_up = current_mFRR_up - previous_mFRR_up
@@ -307,7 +323,9 @@ def check_balancing_alarms(df):
                 message = f"⚠️ Warning: Sudden drop in mFRR Up by {abs(rate_of_change_up)} MWh at {df.index[i]}"
             if message not in warning_alarms:
                 warning_alarms.append(message)
-                all_alarms.append((df.index[i], message, "Warning"))
+                alarm_id = datetime.strptime(df.iloc[i]["Time Period (EET)"].split(" - ")[0], "%Y-%m-%d %H:%M:%S")
+                alarm_id = eet_timezone.localize(alarm_id).timestamp()  # Convert to timestamp
+                all_alarms.append((alarm_id, message, "Warning"))
 
         # Check for sudden increase or drop in mFRR Down
         if abs(rate_of_change_down) >= RATE_OF_CHANGE_THRESHOLD:
@@ -317,21 +335,26 @@ def check_balancing_alarms(df):
                 message = f"⚠️ Warning: Sudden drop in mFRR Down by {abs(rate_of_change_down)} MWh at {df.index[i]}"
             if message not in warning_alarms:
                 warning_alarms.append(message)
-                all_alarms.append((df.index[i], message, "Warning"))
-
+                alarm_id = datetime.strptime(df.iloc[i]["Time Period (EET)"].split(" - ")[0], "%Y-%m-%d %H:%M:%S")
+                alarm_id = eet_timezone.localize(alarm_id).timestamp()  # Convert to timestamp
+                all_alarms.append((alarm_id, message, "Warning"))
 
         # ================= Critical Alarms ====================================
         if previous_mFRR_up > 0 and current_mFRR_down > 0:
             message = f"🚨 Critical: System switched from deficit to surplus at {df.index[i]}"
             if message not in critical_alarms:
                 critical_alarms.append(message)
-                all_alarms.append((df.index[i], message, "Critical"))
+                alarm_id = datetime.strptime(df.iloc[i]["Time Period (EET)"].split(" - ")[0], "%Y-%m-%d %H:%M:%S")
+                alarm_id = eet_timezone.localize(alarm_id).timestamp()  # Convert to timestamp
+                all_alarms.append((alarm_id, message, "Critical"))
 
         if previous_mFRR_down > 0 and current_mFRR_up > 0:
             message = f"🚨 Critical: System switched from surplus to deficit at {df.index[i]}"
             if message not in critical_alarms:
                 critical_alarms.append(message)
-                all_alarms.append((df.index[i], message, "Critical"))
+                alarm_id = datetime.strptime(df.iloc[i]["Time Period (EET)"].split(" - ")[0], "%Y-%m-%d %H:%M:%S")
+                alarm_id = eet_timezone.localize(alarm_id).timestamp()  # Convert to timestamp
+                all_alarms.append((alarm_id, message, "Critical"))
 
         # Opposite aFRR activation (aFRR spike in opposite direction)
         if previous_aFRR_up > previous_aFRR_down and previous_aFRR_up > THRESHOLD_AFRR_UP:
@@ -339,14 +362,18 @@ def check_balancing_alarms(df):
                 message = f"🚨 Critical: Sudden spike in aFRR Down at {df.index[i]}"
                 if message not in critical_alarms:
                     critical_alarms.append(message)
-                    all_alarms.append((df.index[i], message, "Critical"))
+                    alarm_id = datetime.strptime(df.iloc[i]["Time Period (EET)"].split(" - ")[0], "%Y-%m-%d %H:%M:%S")
+                    alarm_id = eet_timezone.localize(alarm_id).timestamp()  # Convert to timestamp
+                    all_alarms.append((alarm_id, message, "Critical"))
 
         if previous_aFRR_down > previous_aFRR_up and previous_aFRR_down > THRESHOLD_AFRR_DOWN:
             if current_aFRR_up > previous_aFRR_up and current_aFRR_up > THRESHOLD_AFRR_UP:
                 message = f"🚨 Critical: Sudden spike in aFRR Up at {df.index[i]}"
                 if message not in critical_alarms:
                     critical_alarms.append(message)
-                    all_alarms.append((df.index[i], message, "Critical"))
+                    alarm_id = datetime.strptime(df.iloc[i]["Time Period (EET)"].split(" - ")[0], "%Y-%m-%d %H:%M:%S")
+                    alarm_id = eet_timezone.localize(alarm_id).timestamp()  # Convert to timestamp
+                    all_alarms.append((alarm_id, message, "Critical"))
 
           # ================= aFRR-Only Imbalance Detection ===========================
 
@@ -355,13 +382,17 @@ def check_balancing_alarms(df):
             message = f"⚠️ Warning: aFRR switched from Up to Down dominance at {df.index[i]}"
             if message not in warning_alarms:
                 warning_alarms.append(message)
-                all_alarms.append((df.index[i], message, "Warning"))
+                alarm_id = datetime.strptime(df.iloc[i]["Time Period (EET)"].split(" - ")[0], "%Y-%m-%d %H:%M:%S")
+                alarm_id = eet_timezone.localize(alarm_id).timestamp()  # Convert to timestamp
+                all_alarms.append((alarm_id, message, "Warning"))
 
         if previous_aFRR_down > previous_aFRR_up and current_aFRR_up > current_aFRR_down:
             message = f"⚠️ Warning: aFRR switched from Down to Up dominance at {df.index[i]}"
             if message not in warning_alarms:
                 warning_alarms.append(message)
-                all_alarms.append((df.index[i], message, "Warning"))
+                alarm_id = datetime.strptime(df.iloc[i]["Time Period (EET)"].split(" - ")[0], "%Y-%m-%d %H:%M:%S")
+                alarm_id = eet_timezone.localize(alarm_id).timestamp()  # Convert to timestamp
+                all_alarms.append((alarm_id, message, "Warning"))
 
         # mFRR deactivation when it is active but there is no update when the difference between the current time and the beggining of the next quarter is less than 9 minutes
         # Ensure we have enough data before checking
@@ -397,14 +428,13 @@ def check_balancing_alarms(df):
                            f"The next interval may rely solely on aFRR.")
 
                 # Generate an alarm ID using the expected interval timestamp
-                alarm_id = f"mFRR_missing_{expected_next_interval.strftime('%Y-%m-%d %H:%M')}"
+                alarm_id = expected_next_interval.timestamp()
 
                 # Prevent duplicates
                 if message not in critical_alarms:
                     critical_alarms.append(message)
                     all_alarms.append((alarm_id, message, "Critical"))
                     print(f"Triggering Critical Alarm: {message}")
-
 
         # Large spikes in aFRR
         aFRR_spike_up = abs(current_aFRR_up - previous_aFRR_up)
@@ -414,20 +444,24 @@ def check_balancing_alarms(df):
             message = f"🚨 Critical: Sudden large spike in aFRR Up by {aFRR_spike_up} MWh at {df.index[i]}"
             if message not in critical_alarms:
                 critical_alarms.append(message)
-                all_alarms.append((df.index[i], message, "Critical"))
+                alarm_id = datetime.strptime(df.iloc[i]["Time Period (EET)"].split(" - ")[0], "%Y-%m-%d %H:%M:%S")
+                alarm_id = eet_timezone.localize(alarm_id).timestamp()  # Convert to timestamp
+                all_alarms.append((alarm_id, message, "Critical"))
 
         if aFRR_spike_down >= AFRR_SPIKE_THRESHOLD:
             message = f"🚨 Critical: Sudden large spike in aFRR Down by {aFRR_spike_down} MWh at {df.index[i]}"
             if message not in critical_alarms:
                 critical_alarms.append(message)
-                all_alarms.append((df.index[i], message, "Critical"))
+                alarm_id = datetime.strptime(df.iloc[i]["Time Period (EET)"].split(" - ")[0], "%Y-%m-%d %H:%M:%S")
+                alarm_id = eet_timezone.localize(alarm_id).timestamp()  # Convert to timestamp
+                all_alarms.append((alarm_id, message, "Critical"))
 
         # Check for new critical alarms and make a call if any
         new_critical_alarms = [alarm for alarm in critical_alarms if alarm not in st.session_state["calls_made_critical"]]
         if new_critical_alarms:
             for alarm in new_critical_alarms:
                 if is_valid_phone_number(USER_PHONE_NUMBER):
-                    alarm_id = alarm[0]  # Ensure an alarm ID is passed
+                    alarm_id = int(alarm[0])  # Convert timestamp to integer (seconds)
                     make_call("Critical", alarm, alarm_id)
                     st.session_state["calls_made_critical"].append(alarm)  # Store it immediately
 
@@ -437,7 +471,7 @@ def check_balancing_alarms(df):
             if new_warning_alarms:
                 for alarm in new_warning_alarms:
                     if is_valid_phone_number(USER_PHONE_NUMBER):
-                        alarm_id = alarm[0]
+                        alarm_id = int(alarm[0])  # Convert timestamp to integer (seconds)
                         make_call("Warning", alarm, alarm_id)
                         st.session_state["calls_made_warning"].append(alarm)
 
@@ -472,10 +506,7 @@ with col2:
     all_alarms = check_balancing_alarms(data)
 
     # Sort alarms chronologically before displaying
-    # Ensure all alarms have a valid ID before sorting
-    st.session_state["all_alarms"].sort(
-        key=lambda x: (x[0] if isinstance(x[0], (int, float)) else float('-inf')), reverse=True
-    )
+    st.session_state["all_alarms"].sort(key=lambda x: x[0], reverse=True)
 
     if all_alarms:
         for timestamp, message, alarm_type in all_alarms:
