@@ -461,7 +461,12 @@ def check_balancing_alarms(df):
         if new_critical_alarms:
             for alarm in new_critical_alarms:
                 if is_valid_phone_number(USER_PHONE_NUMBER):
-                    alarm_id = int(alarm[0])  # Convert timestamp to integer (seconds)
+                    # Ensure alarm ID is an integer, handling different cases
+                    if isinstance(alarm[0], (int, float)):  
+                        alarm_id = int(alarm[0])  # Convert to integer if numeric
+                    else:
+                        alarm_id = hash(alarm[0])  # Generate a unique hash for string-based IDs
+                    
                     make_call("Critical", alarm, alarm_id)
                     st.session_state["calls_made_critical"].append(alarm)  # Store it immediately
 
@@ -471,7 +476,12 @@ def check_balancing_alarms(df):
             if new_warning_alarms:
                 for alarm in new_warning_alarms:
                     if is_valid_phone_number(USER_PHONE_NUMBER):
-                        alarm_id = int(alarm[0])  # Convert timestamp to integer (seconds)
+                        # Ensure alarm ID consistency
+                        if isinstance(alarm[0], (int, float)):  
+                            alarm_id = int(alarm[0])  # Convert to integer if numeric
+                        else:
+                            alarm_id = hash(alarm[0])  # Generate a unique hash for string-based IDs
+                        
                         make_call("Warning", alarm, alarm_id)
                         st.session_state["calls_made_warning"].append(alarm)
 
