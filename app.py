@@ -461,12 +461,14 @@ def check_balancing_alarms(df):
         if new_critical_alarms:
             for alarm in new_critical_alarms:
                 if is_valid_phone_number(USER_PHONE_NUMBER):
-                    # Ensure alarm ID is an integer, handling different cases
+                    # Ensure alarm ID is numeric if possible, otherwise use timestamp as fallback
                     if isinstance(alarm[0], (int, float)):  
-                        alarm_id = int(alarm[0])  # Convert to integer if numeric
+                        alarm_id = int(alarm[0])  # Standard case, keep as integer
                     else:
-                        alarm_id = hash(alarm[0])  # Generate a unique hash for string-based IDs
+                        # Generate an ID based on the expected next interval timestamp (for mFRR deactivation alarms)
+                        alarm_id = int(datetime.now().timestamp())  # Use Unix timestamp as unique ID
                     
+                    print(f"🔔 Calling for Critical Alarm: {alarm}, ID: {alarm_id}")
                     make_call("Critical", alarm, alarm_id)
                     st.session_state["calls_made_critical"].append(alarm)  # Store it immediately
 
@@ -478,12 +480,14 @@ def check_balancing_alarms(df):
                     if is_valid_phone_number(USER_PHONE_NUMBER):
                         # Ensure alarm ID consistency
                         if isinstance(alarm[0], (int, float)):  
-                            alarm_id = int(alarm[0])  # Convert to integer if numeric
+                            alarm_id = int(alarm[0])  # Standard case, keep as integer
                         else:
-                            alarm_id = hash(alarm[0])  # Generate a unique hash for string-based IDs
+                            alarm_id = int(datetime.now().timestamp())  # Use Unix timestamp as unique ID
                         
+                        print(f"🔔 Calling for Warning Alarm: {alarm}, ID: {alarm_id}")
                         make_call("Warning", alarm, alarm_id)
                         st.session_state["calls_made_warning"].append(alarm)
+
 
     # Append only new alarms to the stored session state
     for alarm in all_alarms:
