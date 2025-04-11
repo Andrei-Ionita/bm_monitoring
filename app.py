@@ -569,7 +569,7 @@ def check_balancing_alarms(df):
 eet_timezone = pytz.timezone('Europe/Bucharest')
 
 # Layout for the app with columns
-col1, col2 = st.columns([2, 1])  # Table takes 2/3 width, alarms take 1/3 width
+col1, col2 = st.columns([5, 1])  # Table takes 2/3 width, alarms take 1/3 width
 
 with col1:
     st.subheader("Balancing Market Data")
