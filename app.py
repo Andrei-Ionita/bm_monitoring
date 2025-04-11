@@ -134,7 +134,6 @@ def make_call(alarm_type, alarm_message, alarm_id):
     except Exception as e:
         print(f"Error making the call: {e}")
 
-
 # Function to fetch and convert data to EET
 def fetch_balancing_energy_data():
     """Fetch activated balancing energy data, convert timestamps to EET, and filter only today's data."""
@@ -214,6 +213,75 @@ def fetch_balancing_energy_data():
     # Debug: Print first few rows of the dataframe
     print("Processed DataFrame:")
     print(df.head())
+
+    return df
+
+def fetch_marginal_prices():
+    """
+    Fetch marginal activation prices for balancing energy.
+    Combines mFRR Scheduled and Direct into one per direction.
+    """
+    import requests
+    from datetime import datetime, timedelta
+    import pytz
+    import pandas as pd
+
+    eet = pytz.timezone("Europe/Bucharest")
+    now_eet = datetime.now(eet)
+    midnight_eet = now_eet.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    from_time_utc = midnight_eet.astimezone(pytz.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    to_time_utc = (midnight_eet + timedelta(days=1)).astimezone(pytz.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+    url = f"https://newmarkets.transelectrica.ro/usy-durom-publicreportg01/00121002500000000000000000000100/publicReport/marginalPricesOverview?timeInterval.from={from_time_utc}&timeInterval.to={to_time_utc}&pageInfo.pageSize=3000"
+
+    response = requests.get(url)
+    if response.status_code != 200:
+        st.error(f"Failed to fetch marginal prices. Status code: {response.status_code}")
+        return pd.DataFrame()
+
+    data = response.json().get("itemList", [])
+
+    processed = []
+    for item in data:
+        try:
+            utc_from = datetime.fromisoformat(item["timeInterval"]["from"].replace("Z", "+00:00"))
+            utc_to = datetime.fromisoformat(item["timeInterval"]["to"].replace("Z", "+00:00"))
+
+            eet_from = utc_from.astimezone(eet)
+            eet_to = utc_to.astimezone(eet)
+
+            time_period = f"{eet_from.strftime('%Y-%m-%d %H:%M:%S')} - {eet_to.strftime('%Y-%m-%d %H:%M:%S')}"
+
+            aFRR_up = item.get("aFRR_Up", 0) or 0
+            aFRR_down = item.get("aFRR_Down", 0) or 0
+
+            mFRR_up_scheduled = item.get("mFRR_Up_Scheduled", 0) or 0
+            mFRR_up_direct = item.get("mFRR_Up_Direct", 0) or 0
+            mFRR_down_scheduled = item.get("mFRR_Down_Scheduled", 0) or 0
+            mFRR_down_direct = item.get("mFRR_Down_Direct", 0) or 0
+
+            mFRR_up_total = mFRR_up_scheduled + mFRR_up_direct
+            mFRR_down_total = mFRR_down_scheduled + mFRR_down_direct
+
+            processed.append([
+                time_period,
+                aFRR_up,
+                aFRR_down,
+                mFRR_up_total,
+                mFRR_down_total
+            ])
+        except Exception as e:
+            print(f"Error parsing marginal price row: {e}")
+            continue
+
+    df = pd.DataFrame(processed, columns=[
+        "Time Period (EET)",
+        "aFRR Up Price (RON/MWh)",
+        "aFRR Down Price (RON/MWh)",
+        "mFRR Up Price (RON/MWh)",
+        "mFRR Down Price (RON/MWh)"
+    ])
 
     return df
 
@@ -453,20 +521,35 @@ eet_timezone = pytz.timezone('Europe/Bucharest')
 col1, col2 = st.columns([2, 1])  # Table takes 2/3 width, alarms take 1/3 width
 
 with col1:
-    st.subheader("Activation Energy Table")
-    # Display current time and update info
-    # Get the current time in EET for the "Last updated" information
+    st.subheader("Balancing Market Data")
+    
+    # Show current EET timestamp
     current_time_eet = datetime.now().astimezone(eet_timezone).strftime("%Y-%m-%d %H:%M:%S")
     st.info(f"Last updated: **{current_time_eet}**")
-    data = fetch_balancing_energy_data()
-    if not data.empty:
-        st.write(data)
+
+    # Fetch both datasets
+    activation_df = fetch_balancing_energy_data()
+    price_df = fetch_marginal_prices()
+
+    # Merge and display
+    if not activation_df.empty and not price_df.empty:
+        merged_df = pd.merge(activation_df, price_df, on="Time Period (EET)", how="left")
+
+        # Ensure sorted display by interval start
+        merged_df["Start Time"] = pd.to_datetime(merged_df["Time Period (EET)"].str.split(" - ").str[0])
+        merged_df = merged_df.sort_values(by="Start Time").drop(columns=["Start Time"])
+
+        st.dataframe(merged_df, use_container_width=True)
+
     else:
-        st.warning("No data available.")
+        if activation_df.empty:
+            st.warning("⚠️ Activation energy data is not available.")
+        if price_df.empty:
+            st.warning("⚠️ Marginal price data is not available.")
 
 with col2:
     st.subheader("Alarms Triggered")
-    all_alarms = check_balancing_alarms(data)
+    all_alarms = check_balancing_alarms(merged_df)
 
     # Sort alarms chronologically before displaying
     st.session_state["all_alarms"].sort(key=lambda x: x[0], reverse=True)
