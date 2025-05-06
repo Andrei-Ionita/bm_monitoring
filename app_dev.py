@@ -11,10 +11,18 @@ from twilio.rest import Client
 from dotenv import load_dotenv
 import os
 import asyncio
+import openai
+import json
+from dotenv import load_dotenv
+from base64 import b64encode
+from openai import OpenAI
 import zipfile
 import xml.etree.ElementTree as ET
+import re
 
 load_dotenv()
+api_key_entsoe = os.getenv("API_KEY_ENTSOE")
+
 # Set the EET timezone
 eet_timezone = pytz.timezone('Europe/Bucharest')
 
@@ -137,7 +145,158 @@ def make_call(alarm_type, alarm_message, alarm_id):
     except Exception as e:
         print(f"Error making the call: {e}")
 
-# Fetching the Imbalance volumes=================================================================
+# Function to fetch and convert data to EET
+def fetch_balancing_energy_data():
+    """Fetch activated balancing energy data, convert timestamps to EET, and filter only today's data."""
+
+    # Define timezone
+    eet_timezone = pytz.timezone('Europe/Bucharest')
+    
+    # Get current date in **EET** and set midnight as start of the day
+    eet_now = datetime.now(eet_timezone)
+    eet_midnight = eet_now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    # Convert midnight EET to UTC (since API operates in UTC)
+    utc_midnight = eet_midnight.astimezone(pytz.utc)
+
+    # Set API time range: Fetch from **EET midnight (converted to UTC) until now**
+    from_time = utc_midnight.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    to_time = (utc_midnight + timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+    # Debug: Print time range used for fetching data
+    print(f"Fetching data from {from_time} to {to_time} (UTC)")
+
+    # API Request
+    url = f"https://newmarkets.transelectrica.ro/usy-durom-publicreportg01/00121002500000000000000000000100/publicReport/activatedBalancingEnergyOverview?timeInterval.from={from_time}&timeInterval.to={to_time}&pageInfo.pageSize=3000"
+    
+    response = requests.get(url)
+    if response.status_code != 200:
+        st.error(f"Failed to fetch data. Status code: {response.status_code}")
+        return pd.DataFrame()
+
+    # Parse JSON response
+    data = response.json()
+    items = data.get("itemList", [])
+
+    # Debug: Print number of fetched records
+    print(f"Fetched {len(items)} records from API.")
+
+    # Process and convert timestamps
+    rows = []
+    for item in items:
+        try:
+            # Convert timestamps from UTC to EET
+            utc_from = datetime.fromisoformat(item['timeInterval']['from'].replace('Z', '+00:00'))
+            utc_to = datetime.fromisoformat(item['timeInterval']['to'].replace('Z', '+00:00'))
+
+            eet_from = utc_from.astimezone(eet_timezone)
+            eet_to = utc_to.astimezone(eet_timezone)
+
+            # Debugging - Print all fetched rows
+            print(f"Processing: {eet_from} - {eet_to}")
+
+            # Filter out rows **before today's midnight (EET)**
+            if eet_from < eet_midnight:
+                print(f"Skipping {eet_from} - before today's midnight")
+                continue  # Skip records from the previous day
+
+            # Store in formatted string
+            time_period = f"{eet_from.strftime('%Y-%m-%d %H:%M:%S')} - {eet_to.strftime('%Y-%m-%d %H:%M:%S')}"
+            
+            # Extract energy values (default to 0 if missing)
+            afrr_up = item.get("aFRR_Up", 0) or 0
+            afrr_down = item.get("aFRR_Down", 0) or 0
+            mfrr_up = item.get("mFRR_Up", 0) or 0
+            mfrr_down = item.get("mFRR_Down", 0) or 0
+
+            # Debugging - Log all added records
+            print(f"ADDING: {time_period} | aFRR_Up: {afrr_up}, aFRR_Down: {afrr_down}, mFRR_Up: {mfrr_up}, mFRR_Down: {mfrr_down}")
+
+            # Store processed row
+            rows.append([time_period, afrr_up, afrr_down, mfrr_up, mfrr_down])
+
+        except Exception as e:
+            print(f"Error processing record: {e}")
+
+    # Convert to DataFrame
+    df = pd.DataFrame(rows, columns=["Time Period (EET)", "aFRR Up (MWh)", "aFRR Down (MWh)", "mFRR Up (MWh)", "mFRR Down (MWh)"])
+    
+    # Debug: Print first few rows of the dataframe
+    print("Processed DataFrame:")
+    print(df.head())
+
+    return df
+
+def fetch_marginal_prices():
+    """
+    Fetch marginal activation prices for balancing energy.
+    Combines mFRR Scheduled and Direct into one per direction.
+    """
+    import requests
+    from datetime import datetime, timedelta
+    import pytz
+    import pandas as pd
+
+    eet = pytz.timezone("Europe/Bucharest")
+    now_eet = datetime.now(eet)
+    midnight_eet = now_eet.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    from_time_utc = midnight_eet.astimezone(pytz.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    to_time_utc = (midnight_eet + timedelta(days=1)).astimezone(pytz.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+    url = f"https://newmarkets.transelectrica.ro/usy-durom-publicreportg01/00121002500000000000000000000100/publicReport/marginalPricesOverview?timeInterval.from={from_time_utc}&timeInterval.to={to_time_utc}&pageInfo.pageSize=3000"
+
+    response = requests.get(url)
+    if response.status_code != 200:
+        st.error(f"Failed to fetch marginal prices. Status code: {response.status_code}")
+        return pd.DataFrame()
+
+    data = response.json().get("itemList", [])
+
+    processed = []
+    for item in data:
+        try:
+            utc_from = datetime.fromisoformat(item["timeInterval"]["from"].replace("Z", "+00:00"))
+            utc_to = datetime.fromisoformat(item["timeInterval"]["to"].replace("Z", "+00:00"))
+
+            eet_from = utc_from.astimezone(eet)
+            eet_to = utc_to.astimezone(eet)
+
+            time_period = f"{eet_from.strftime('%Y-%m-%d %H:%M:%S')} - {eet_to.strftime('%Y-%m-%d %H:%M:%S')}"
+
+            aFRR_up = item.get("aFRR_Up", 0) or 0
+            aFRR_down = item.get("aFRR_Down", 0) or 0
+
+            mFRR_up_scheduled = item.get("mFRR_Up_Scheduled", 0) or 0
+            mFRR_up_direct = item.get("mFRR_Up_Direct", 0) or 0
+            mFRR_down_scheduled = item.get("mFRR_Down_Scheduled", 0) or 0
+            mFRR_down_direct = item.get("mFRR_Down_Direct", 0) or 0
+
+            mFRR_up_total = mFRR_up_scheduled + mFRR_up_direct
+            mFRR_down_total = mFRR_down_scheduled + mFRR_down_direct
+
+            processed.append([
+                time_period,
+                aFRR_up,
+                aFRR_down,
+                mFRR_up_total,
+                mFRR_down_total
+            ])
+        except Exception as e:
+            print(f"Error parsing marginal price row: {e}")
+            continue
+
+    df = pd.DataFrame(processed, columns=[
+        "Time Period (EET)",
+        "aFRR Up Price (RON/MWh)",
+        "aFRR Down Price (RON/MWh)",
+        "mFRR Up Price (RON/MWh)",
+        "mFRR Down Price (RON/MWh)"
+    ])
+
+    return df
+
+# Fetching the Imbalance volumes========================================================
 def create_combined_imbalance_dataframe(df_prices, df_volumes):
 	"""
 	This function combines the imbalance prices and volumes into a single DataFrame.
@@ -159,6 +318,7 @@ def create_combined_imbalance_dataframe(df_prices, df_volumes):
 	df_combined.fillna(0.0, inplace=True)
 
 	return df_combined
+
 def fetch_intraday_imbalance_volumes():
 	"""Fetch today's estimated system imbalance volumes from Transelectrica DAMAS API in EET."""
 
@@ -360,158 +520,53 @@ def fetch_igcc_netting_flows():
 		print(f"❌ Error processing IGCC data response: {json_error}")
 		return pd.DataFrame(columns=["Timestamp", "IGCC Import (MW)", "IGCC Export (MW)"])
 
-# Function to fetch and convert data to EET
-def fetch_balancing_energy_data():
-    """Fetch activated balancing energy data, convert timestamps to EET, and filter only today's data."""
+# Function to build the balancing market context in EET==========================================
+def build_balancing_market_context_eet():
+    # Fetching the core inputs
+    df_imbalance_volumes = fetch_intraday_imbalance_volumes()
+    df_imbalance_prices = fetch_intraday_imbalance_prices()
+    df_imbalance = create_combined_imbalance_dataframe(df_imbalance_prices, df_imbalance_volumes)
+    df_igcc = fetch_igcc_netting_flows()
+    activation_df = fetch_balancing_energy_data()
+    price_df = fetch_marginal_prices()
+    # Merge and display
+    merged_df = pd.merge(activation_df, price_df, on="Time Period (EET)", how="left")
 
-    # Define timezone
-    eet_timezone = pytz.timezone('Europe/Bucharest')
+    # Step 4: Extract Timestamp from start of time period
+    merged_df["Timestamp"] = merged_df["Time Period (EET)"].str.split(" - ").str[1]
+    merged_df["Timestamp"] = pd.to_datetime(merged_df["Timestamp"], errors="coerce")
+    merged_df["Timestamp"] = merged_df["Timestamp"].dt.tz_localize("Europe/Bucharest", ambiguous="NaT", nonexistent="shift_forward").dt.tz_localize(None)
+
+    # Step 5: Drop the old "Time Period (EET)" column
+    merged_df.drop(columns=["Time Period (EET)"], inplace=True)
+
+    # Step 6: Merge imbalance + activation+prices on Timestamp
+    df_final = pd.merge(df_imbalance, merged_df, on="Timestamp", how="outer")
+
+    # --- Step 4: Fetch and merge IGCC flows ---
+    df_igcc["Timestamp"] = pd.to_datetime(df_igcc["Timestamp"]).dt.tz_localize("Europe/Bucharest", ambiguous="NaT", nonexistent="shift_forward").dt.tz_localize(None)
+
+    df_final = pd.merge(df_final, df_igcc, on="Timestamp", how="left")
+
+    # --- Step 5: Final cleanup ---
+    df_final = df_final.sort_values("Timestamp").reset_index(drop=True)
+
+    # Fill missing values for numeric columns
+    energy_cols = [
+        "aFRR Up (MWh)", "aFRR Down (MWh)",
+        "mFRR Up (MWh)", "mFRR Down (MWh)",
+        "aFRR Up Price (RON/MWh)", "aFRR Down Price (RON/MWh)",
+        "mFRR Up Price (RON/MWh)", "mFRR Down Price (RON/MWh)",
+        "Excedent Price", "Deficit Price", "Imbalance Volume",
+        "IGCC Import (MW)", "IGCC Export (MW)"
+    ]
+    for col in energy_cols:
+        if col in df_final.columns:
+            df_final[col] = df_final[col].fillna(0)
+
+    return df_final
     
-    # Get current date in **EET** and set midnight as start of the day
-    eet_now = datetime.now(eet_timezone)
-    eet_midnight = eet_now.replace(hour=0, minute=0, second=0, microsecond=0)
-
-    # Convert midnight EET to UTC (since API operates in UTC)
-    utc_midnight = eet_midnight.astimezone(pytz.utc)
-
-    # Set API time range: Fetch from **EET midnight (converted to UTC) until now**
-    from_time = utc_midnight.strftime("%Y-%m-%dT%H:%M:%S.000Z")
-    to_time = (utc_midnight + timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
-
-    # Debug: Print time range used for fetching data
-    print(f"Fetching data from {from_time} to {to_time} (UTC)")
-
-    # API Request
-    url = f"https://newmarkets.transelectrica.ro/usy-durom-publicreportg01/00121002500000000000000000000100/publicReport/activatedBalancingEnergyOverview?timeInterval.from={from_time}&timeInterval.to={to_time}&pageInfo.pageSize=3000"
-    
-    response = requests.get(url)
-    if response.status_code != 200:
-        st.error(f"Failed to fetch data. Status code: {response.status_code}")
-        return pd.DataFrame()
-
-    # Parse JSON response
-    data = response.json()
-    items = data.get("itemList", [])
-
-    # Debug: Print number of fetched records
-    print(f"Fetched {len(items)} records from API.")
-
-    # Process and convert timestamps
-    rows = []
-    for item in items:
-        try:
-            # Convert timestamps from UTC to EET
-            utc_from = datetime.fromisoformat(item['timeInterval']['from'].replace('Z', '+00:00'))
-            utc_to = datetime.fromisoformat(item['timeInterval']['to'].replace('Z', '+00:00'))
-
-            eet_from = utc_from.astimezone(eet_timezone)
-            eet_to = utc_to.astimezone(eet_timezone)
-
-            # Debugging - Print all fetched rows
-            print(f"Processing: {eet_from} - {eet_to}")
-
-            # Filter out rows **before today's midnight (EET)**
-            if eet_from < eet_midnight:
-                print(f"Skipping {eet_from} - before today’s midnight")
-                continue  # Skip records from the previous day
-
-            # Store in formatted string
-            time_period = f"{eet_from.strftime('%Y-%m-%d %H:%M:%S')} - {eet_to.strftime('%Y-%m-%d %H:%M:%S')}"
-            
-            # Extract energy values (default to 0 if missing)
-            afrr_up = item.get("aFRR_Up", 0) or 0
-            afrr_down = item.get("aFRR_Down", 0) or 0
-            mfrr_up = item.get("mFRR_Up", 0) or 0
-            mfrr_down = item.get("mFRR_Down", 0) or 0
-
-            # Debugging - Log all added records
-            print(f"ADDING: {time_period} | aFRR_Up: {afrr_up}, aFRR_Down: {afrr_down}, mFRR_Up: {mfrr_up}, mFRR_Down: {mfrr_down}")
-
-            # Store processed row
-            rows.append([time_period, afrr_up, afrr_down, mfrr_up, mfrr_down])
-
-        except Exception as e:
-            print(f"Error processing record: {e}")
-
-    # Convert to DataFrame
-    df = pd.DataFrame(rows, columns=["Time Period (EET)", "aFRR Up (MWh)", "aFRR Down (MWh)", "mFRR Up (MWh)", "mFRR Down (MWh)"])
-    
-    # Debug: Print first few rows of the dataframe
-    print("Processed DataFrame:")
-    print(df.head())
-
-    return df
-
-def fetch_marginal_prices():
-    """
-    Fetch marginal activation prices for balancing energy.
-    Combines mFRR Scheduled and Direct into one per direction.
-    """
-    import requests
-    from datetime import datetime, timedelta
-    import pytz
-    import pandas as pd
-
-    eet = pytz.timezone("Europe/Bucharest")
-    now_eet = datetime.now(eet)
-    midnight_eet = now_eet.replace(hour=0, minute=0, second=0, microsecond=0)
-
-    from_time_utc = midnight_eet.astimezone(pytz.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
-    to_time_utc = (midnight_eet + timedelta(days=1)).astimezone(pytz.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
-
-    url = f"https://newmarkets.transelectrica.ro/usy-durom-publicreportg01/00121002500000000000000000000100/publicReport/marginalPricesOverview?timeInterval.from={from_time_utc}&timeInterval.to={to_time_utc}&pageInfo.pageSize=3000"
-
-    response = requests.get(url)
-    if response.status_code != 200:
-        st.error(f"Failed to fetch marginal prices. Status code: {response.status_code}")
-        return pd.DataFrame()
-
-    data = response.json().get("itemList", [])
-
-    processed = []
-    for item in data:
-        try:
-            utc_from = datetime.fromisoformat(item["timeInterval"]["from"].replace("Z", "+00:00"))
-            utc_to = datetime.fromisoformat(item["timeInterval"]["to"].replace("Z", "+00:00"))
-
-            eet_from = utc_from.astimezone(eet)
-            eet_to = utc_to.astimezone(eet)
-
-            time_period = f"{eet_from.strftime('%Y-%m-%d %H:%M:%S')} - {eet_to.strftime('%Y-%m-%d %H:%M:%S')}"
-
-            aFRR_up = item.get("aFRR_Up", 0) or 0
-            aFRR_down = item.get("aFRR_Down", 0) or 0
-
-            mFRR_up_scheduled = item.get("mFRR_Up_Scheduled", 0) or 0
-            mFRR_up_direct = item.get("mFRR_Up_Direct", 0) or 0
-            mFRR_down_scheduled = item.get("mFRR_Down_Scheduled", 0) or 0
-            mFRR_down_direct = item.get("mFRR_Down_Direct", 0) or 0
-
-            mFRR_up_total = mFRR_up_scheduled + mFRR_up_direct
-            mFRR_down_total = mFRR_down_scheduled + mFRR_down_direct
-
-            processed.append([
-                time_period,
-                aFRR_up,
-                aFRR_down,
-                mFRR_up_total,
-                mFRR_down_total
-            ])
-        except Exception as e:
-            print(f"Error parsing marginal price row: {e}")
-            continue
-
-    df = pd.DataFrame(processed, columns=[
-        "Time Period (EET)",
-        "aFRR Up Price (RON/MWh)",
-        "aFRR Down Price (RON/MWh)",
-        "mFRR Up Price (RON/MWh)",
-        "mFRR Down Price (RON/MWh)"
-    ])
-
-    return df
-
-# Function to detect and handle alarms
+# Function to detect and handle alarms================================================
 def check_balancing_alarms(df):
     warning_alarms = []
     critical_alarms = []
@@ -791,8 +846,267 @@ def check_balancing_alarms(df):
     # Return stored alarms to display in UI
     return st.session_state["all_alarms"]
 
-# Define the EET timezone
-eet_timezone = pytz.timezone('Europe/Bucharest')
+# Adding the expert advisor
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+def encode_image_to_base64(img_file):
+    """
+    Converts an uploaded image (from st.file_uploader) to base64 format
+    for use in GPT-4 Vision's image_url API.
+    """
+    return b64encode(img_file.read()).decode("utf-8")
+
+# ---------------------------------------------------------------------------
+# Helper -- turn the EET-aligned DataFrame into compact JSON rows
+# ---------------------------------------------------------------------------
+def df_to_json_rows(df, keep_cols=None, round_floats=3):
+    """
+    Convert DataFrame → JSON (list-of-dicts).
+    • Floats are rounded
+    • NaNs → 0
+    • pd.Timestamp / datetime → ISO string
+    """
+    import json, numpy as np, pandas as pd, datetime as dt
+
+    if keep_cols is not None:
+        df = df[keep_cols]
+
+    def fix(v):
+        # ----- handle timestamps -------
+        if isinstance(v, (pd.Timestamp, dt.datetime)):
+            # keep timezone info if present
+            return v.isoformat()
+        # ----- floats ----------
+        if isinstance(v, (float, np.floating)):
+            return round(float(v), round_floats)
+        # ----- NaN -------------
+        if pd.isna(v):
+            return 0
+        return v
+
+    rows = [{k: fix(v) for k, v in row.items()} for row in df.to_dict("records")]
+    return json.dumps(rows, ensure_ascii=False)
+def clean_model_response(raw: str) -> dict:
+    """
+    Clean and parse the JSON response from the model.
+    Removes markdown code block wrappers and returns parsed JSON.
+    """
+    cleaned = re.sub(r"^```json|```$", "", raw.strip(), flags=re.MULTILINE).strip()
+    return json.loads(cleaned)
+
+def call_expert(latest_context_df, notes=""):
+    """
+    Call the reasoning LLM to forecast Balancing-Market state.
+    • Primary model: gpt-4-o3
+    • Fallback model: o3-mini
+    Returns dict with keys: result (parsed JSON) & model_used
+    On total failure returns dict with 'error'.
+    """
+    import json
+    from openai import OpenAI
+
+    client = OpenAI()
+    o3_err = None
+    fallback_err = None
+
+    cols = [
+        "Timestamp",
+        "Imbalance Volume",
+        "IGCC Export (MW)", "IGCC Import (MW)",
+        "aFRR Up (MWh)", "aFRR Down (MWh)",
+        "mFRR Up (MWh)", "mFRR Down (MWh)",
+        "aFRR Up Price (RON/MWh)", "aFRR Down Price (RON/MWh)",
+        "mFRR Up Price (RON/MWh)", "mFRR Down Price (RON/MWh)"
+    ]
+
+    df = latest_context_df[cols].copy()
+    df["Timestamp"] = df["Timestamp"].astype(str)
+
+    # Use sanitized key format for JSON prompt
+    df.columns = [col.strip().replace(" ", "_").replace("(", "").replace(")", "") for col in df.columns]
+    json_rows = json.dumps(df.to_dict(orient="records"), indent=2, ensure_ascii=False)
+    # --- 2) Beast-level Expert Prompt ---
+    system_instruction = """
+ROLE  
+You are the Lead Balancing-Market Trader for a 500 MW renewable portfolio in Romania.  
+You routinely outperform OPCOM day-ahead by >15 €/MWh via superior imbalance forecasting  
+and proactive, risk-adjusted strategy execution.
+
+=== DATA PROVIDED (JSON array 'DATA') ===  
+• Timestamp (EET, 15-min rows)  
+• Imbalance Volume MWh (+ = surplus, – = deficit)  
+• Deficit & Excedent Prices (RON/MWh)  
+• aFRR Up/Down & mFRR Up/Down activations (MWh)  
+• Marginal prices for each service (RON/MWh)  
+• IGCC Import / Export (MW)
+
+=== ADVANCED INTERPRETATION RULES ===  
+
+1. Supply–Demand Lens  
+• Surplus = +Imbalance + IGCC Export + mFRR Down + Neg Deficit Price  
+• Deficit = –Imbalance + IGCC Import + mFRR Up + High Deficit Price
+
+2. Price Skew & Elasticity  
+• Elasticity ≈ 0.4 RON/MWh mFRR  
+• mFRR Down > 50 + Deficit Price < 0 → 80% chance price < –200 next interval
+
+3. Momentum Detection (Reinforcement Logic)  
+• 3+ Surplus = 85% chance of surplus continuing, unless mFRR Up or IGCC reverses  
+• Detect micro-shifts: spikes in aFRR/mFRR with no volume change imply latent signals  
+• IGCC flow reversal ±20 MW is often the first sign of trend change
+
+4. Risk–Reward Zones  
+• mFRR Down > 120 MWh OR Deficit-Price < –300 → "Crash-risk"  
+• IGCC Import > 150 OR Deficit-Price > 700 → "Spike-risk"
+
+5. Action Engine (Tactical Playbook)  
+• Crash-risk & Surplus → Curtail 50–100 MW, bid BM Down at –10  
+• Spike-risk & Deficit → Start Gen, pre-bid mFRR Up at 690  
+• Trend = Stable? → Watch for arbitrage vs IDM spread
+
+6. aFRR Visibility  
+• aFRR is delayed ⇒ treat 0 as "not yet published"  
+• mFRR = real-time ⇒ treat mFRR Up/Down > 0 as predictive signal  
+• If Imbalance = 0 AND aFRR = 0 ⇒ Interval is unpublished — skip reasoning
+
+7. Forecasting Forward  
+• Predict trend over next 2 intervals  
+• If Deficit persists + mFRR Up = 0 ⇒ Forecast upcoming spike  
+• If mFRR Down rising + Imbalance + ⇒ Trend toward price drop
+
+8. Anticipation Layer  
+• Assign confidence % to continuation vs reversal  
+• Suggest alternate paths (ex: “If IGCC reverses, risk of spike rises 40%”)  
+• Include reinforcement-style advice: what to monitor next, how to hedge
+
+=== OUTPUT (JSON ONLY) ===
+
+{
+  "state": "Surplus" or "Deficit",
+  "confidence": float (0.0–1.0),
+  "expected_trend_next_interval": "Upward" or "Stable" or "Reversal",
+  "prob_neg_price": float,
+  "prob_pos_price": float,
+  "premises": ["Observation 1", "Observation 2"],
+  "strategy": "Tactical action (≤20 words)",
+  "rationale": "Why this action makes sense (≤40 words)",
+  "risk_note": "Key risk (≤15 words)",
+  "forward_scenarios": [
+    "If mFRR Up increases by 50 MWh → trend reversal possible",
+    "If IGCC Export drops > 30 MW → price risk to upside"
+  ],
+  "next_monitoring_focus": "mFRR Up spikes, IGCC reversal, aFRR confirmation"
+}
+
+Return valid JSON only.
+"""
+    user_prompt = f"""
+        You are a Balancing Market expert.
+
+        Below is today's real-time 15-min interval context, labeled as DATA.
+        Use this to forecast the next system state, anticipate near-future trends, and recommend action.
+
+        DATA:
+        {json_rows}
+
+        Trader Notes: {notes or "None"}
+
+        Respond in the strict JSON format defined by the system. Output expert-level insight, not generic advice.
+        """
+
+    st.write(user_prompt)
+    # === Try GPT-4o ===
+    try:
+        resp = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": system_instruction},
+                {"role": "user", "content": user_prompt}
+            ],
+            max_completion_tokens=1500
+        )
+        raw_content = resp.choices[0].message.content
+        print(100*"=")
+        print("✅ o3 Response:", repr(raw_content))
+        print(100*"=")
+        return {
+            "result": clean_model_response(raw_content),
+            "model_used": "gpt-4o"
+        }
+
+    except Exception as e:
+        o3_err = e
+        print("❌ gpt-4-o3 failed:", e)
+
+        # === Try o3-mini ===
+        try:
+            resp = client.chat.completions.create(
+                model="o3-mini",
+                messages=[
+                    {"role": "system", "content": system_instruction},
+                    {"role": "user", "content": user_prompt}
+                ],
+                max_completion_tokens=800
+            )
+            raw_content = resp.choices[0].message.content
+            print("🔁 o3-mini response:", repr(raw_content))
+
+            return {
+                "result": clean_model_response(raw_content),
+                "model_used": "o3-mini"
+            }
+
+        except json.JSONDecodeError as je:
+            print("⚠️ JSON parse error:", je)
+            return {
+                "error": "Both gpt-4-o3 and o3-mini failed (JSON parsing).",
+                "o3_error": str(o3_err) if o3_err else "n/a",
+                "fallback_error": f"Invalid JSON: {je}"
+            }
+
+        except Exception as fallback_err:
+            print("❌ o3-mini failed:", fallback_err)
+            return {
+                "error": "Both gpt-4-o3 and o3-mini failed.",
+                "o3_error": str(o3_err) if o3_err else "n/a",
+                "fallback_error": str(fallback_err)
+            }
+
+# Creating the context for the expert advisor===============================================
+# Display in Streamlit for debugging
+st.subheader("📊 Full Balancing Market Context (EET-aligned)")
+imbalance_volumes_df = fetch_intraday_imbalance_volumes()
+st.write(imbalance_volumes_df)
+st.write(fetch_intraday_imbalance_prices())
+st.write(fetch_igcc_netting_flows())
+df_context = build_balancing_market_context_eet()
+st.dataframe(df_context)
+
+def test_o3_mini_connectivity():
+    from openai import OpenAI
+    client = OpenAI()
+
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant."},
+                {"role": "user", "content": "Who are you?"}
+            ],
+            max_completion_tokens=200,
+        )
+
+        print("📬 Raw OpenAI Response:"+100*"=", response)
+        content = response.choices[0].message.content
+        print("🧠 Model Output:", repr(content))  # Use repr to show trailing whitespace
+        return content
+
+    except Exception as e:
+        print("❌ Error:", e)
+        return None
+
+if st.button("Test OpenAI"):
+    st.write(test_o3_mini_connectivity())
 
 # Layout for the app with columns
 col1, col2 = st.columns([5, 1])  # Table takes 2/3 width, alarms take 1/3 width
@@ -807,11 +1121,7 @@ with col1:
     # Fetch both datasets
     activation_df = fetch_balancing_energy_data()
     price_df = fetch_marginal_prices()
-    imbalance_volumes_df = fetch_intraday_imbalance_volumes()
-    imbalance_prices_df = fetch_intraday_imbalance_prices()
-    df_imbalance_volumes_prices = create_combined_imbalance_dataframe(imbalance_prices_df, imbalance_volumes_df)
-    igcc_df = fetch_igcc_netting_flows()
-    
+
     # Merge and display
     if not activation_df.empty and not price_df.empty:
         merged_df = pd.merge(activation_df, price_df, on="Time Period (EET)", how="left")
@@ -819,42 +1129,91 @@ with col1:
         # Ensure sorted display by interval start
         merged_df["Start Time"] = pd.to_datetime(merged_df["Time Period (EET)"].str.split(" - ").str[0])
         merged_df = merged_df.sort_values(by="Start Time").drop(columns=["Start Time"])
-        # Extract and normalize start/end timestamps from interval string
-        merged_df["Interval Start (EET)"] = pd.to_datetime(merged_df["Time Period (EET)"].str.split(" - ").str[0])
-        merged_df["Interval End (EET)"] = pd.to_datetime(merged_df["Time Period (EET)"].str.split(" - ").str[1])
 
-        # Sort by start time
-        merged_df = merged_df.sort_values("Interval Start (EET)").drop(columns=["Interval Start (EET)"])
-
-        # Prepare imbalance prices/volumes DataFrame
-        df_imbalance_volumes_prices["Interval End (EET)"] = pd.to_datetime(df_imbalance_volumes_prices["Timestamp"])
-        df_imbalance_volumes_prices.drop(columns=["Timestamp"], inplace=True)
-        igcc_df["Interval End (EET)"] = pd.to_datetime(igcc_df["Timestamp"])
-        igcc_df.drop(columns=["Timestamp"], inplace=True)
-
-        # Normalize timezones to allow clean merge
-        merged_df["Interval End (EET)"] = merged_df["Interval End (EET)"].dt.tz_localize(None)
-        df_imbalance_volumes_prices["Interval End (EET)"] = df_imbalance_volumes_prices["Interval End (EET)"].dt.tz_localize(None)
-
-        # Merge imbalance prices/volumes
-        final_df = pd.merge(
-            merged_df,
-            df_imbalance_volumes_prices,
-            on="Interval End (EET)",
-            how="left"
-        )
-        final_df = pd.merge(final_df, igcc_df, on="Interval End (EET)", how="left")
-        # Optional: remove Interval End if not needed
-        final_df.drop(columns=["Interval End (EET)"], inplace=True)
-        
-        # Display full merged table
-        st.dataframe(final_df, use_container_width=True)
+        st.dataframe(merged_df, use_container_width=True)
 
     else:
         if activation_df.empty:
             st.warning("⚠️ Activation energy data is not available.")
         if price_df.empty:
             st.warning("⚠️ Marginal price data is not available.")
+    st.markdown("### 🧠 Expert Advisor")
+
+    # Creating the form for the expert advisor
+    with st.form("expert_advisor_form"):
+        st.markdown("#### 📎 Add Notes")
+
+        trader_notes = st.text_area(
+            "Your Observations or Strategy Notes",
+            placeholder="E.g., Wind ramping +200 MW, IGCC is strongly negative..."
+        )
+
+        submitted = st.form_submit_button("🔍 Call Expert Advisor")
+
+        if submitted:
+            # Build the full context
+            full_context_df = build_balancing_market_context_eet()
+
+            # Defensive filtering + sort
+            full_context_df = full_context_df.dropna(subset=["Timestamp"]).sort_values("Timestamp")
+
+            # Get only the last 8 intervals (past)
+            now = pd.Timestamp.now(tz="Europe/Bucharest")
+            full_context_df["Timestamp"] = pd.to_datetime(full_context_df["Timestamp"]).dt.tz_localize("Europe/Bucharest")
+            latest_context_df = full_context_df[full_context_df["Timestamp"] < now].tail(12)
+            st.dataframe(latest_context_df)
+            # Call the expert model
+            expert_result = call_expert(latest_context_df, notes=trader_notes)
+
+            if "error" in expert_result:
+                st.error(f"❌ Error: {expert_result['error']}")
+                if expert_result.get("fallback_error"):
+                    st.code(f"[Fallback Error] {expert_result['fallback_error']}", language="text")
+                elif expert_result.get("o3_error"):
+                    st.code(f"[o3 Error] {expert_result['o3_error']}", language="text")
+            else:
+                result = expert_result["result"]
+                model_used = expert_result["model_used"]
+
+                # ——— 1. Unpublished Interval Warning ———
+                if ((latest_context_df["Imbalance Volume"] == 0) &
+                    (latest_context_df["aFRR Up (MWh)"] == 0) &
+                    (latest_context_df["aFRR Down (MWh)"] == 0)).any():
+                    st.warning("⚠️ One or more intervals appear to be unpublished. Don't interpret them as balanced.")
+
+                # ——— 2. Persistent Trend Check (last 12 intervals from full_context_df) ———
+                last_vols = full_context_df["Imbalance Volume"].dropna().tail(12)
+                if (last_vols > 0).sum() >= 3:
+                    st.info("📈 3+ Surplus intervals detected. Trend may persist unless mFRR Up increases.")
+                elif (last_vols < 0).sum() >= 3:
+                    st.info("📉 3+ Deficit intervals detected. Trend may persist unless IGCC Export or mFRR Down increases.")
+
+                # ——— 3. Display AI Output ———
+                st.success(f"✅ System State: {result['state']} ({int(result['confidence'] * 100)}% confidence)")
+                st.markdown(f"**🤖 Powered by:** `{model_used}`")
+                st.markdown(f"**📊 Trend Next Interval:** {result['expected_trend_next_interval']}")
+
+                st.markdown("**📌 Premises:**")
+                for p in result["premises"]:
+                    st.markdown(f"- {p}")
+
+                st.markdown(f"**🛠 Strategy:** {result['strategy']}")
+                st.markdown(f"**🧠 Rationale:** {result['rationale']}")
+
+                # ——— 4. Risk Note with Color Badge ———
+                risk_text = result["risk_note"].strip()
+                risk_lower = risk_text.lower()
+                if "crash" in risk_lower or "neg" in risk_lower or "spike" in risk_lower:
+                    risk_color = "red"
+                elif "watch" in risk_lower or "likely" in risk_lower:
+                    risk_color = "orange"
+                else:
+                    risk_color = "green"
+
+                st.markdown(
+                    f"**⚠️ Risk Note:** <span style='color:{risk_color}; font-weight:bold'>{risk_text}</span>",
+                    unsafe_allow_html=True
+                )
 
 with col2:
     st.subheader("Alarms Triggered")
@@ -877,4 +1236,5 @@ async def refresh_app(interval_seconds):
     st.rerun()
 
 # Trigger the auto-refresh
-asyncio.run(refresh_app(60))  # Refresh every 60 seconds
+# asyncio.run(refresh_app(60))  # Refresh every 60 seconds
+
