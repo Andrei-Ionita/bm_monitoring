@@ -520,6 +520,83 @@ def fetch_igcc_netting_flows():
 		print(f"❌ Error processing IGCC data response: {json_error}")
 		return pd.DataFrame(columns=["Timestamp", "IGCC Import (MW)", "IGCC Export (MW)"])
 
+#Unintended Deviation================================================================================
+def fetch_unintended_deviation_data():
+	"""Fetch estimated unintended deviations for import and export, converting timestamps to CET."""
+
+	# Define timezone for CET (handles DST automatically)
+	cet_timezone = pytz.timezone('Europe/Bucharest')
+
+	# Get current date in **CET** and set midnight as start of the day
+	cet_now = datetime.now(cet_timezone)
+	cet_midnight = cet_now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+	# Convert midnight CET to UTC (since API operates in UTC)
+	utc_midnight = cet_midnight.astimezone(pytz.utc)
+
+	# Set API time range: Fetch from **CET midnight (converted to UTC) until now**
+	from_time = utc_midnight.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+	to_time = (utc_midnight + timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+	# API Request
+	url = f"https://newmarkets.transelectrica.ro/usy-durom-publicreportg01/00121002500000000000000000000100/publicReport/estimatedPowerSystemImbalance?timeInterval.from={from_time}&timeInterval.to={to_time}&pageInfo.pageSize=3000"
+
+	response = requests.get(url)
+
+	if response.status_code != 200:
+		print(f"⚠️ Failed to fetch data. Status code: {response.status_code}")
+		return pd.DataFrame()
+
+	# Parse JSON response
+	try:
+		data = response.json()
+		items = data.get("itemList", [])
+
+		print(f"✅ Successfully fetched {len(items)} records.")
+
+		if len(items) == 0:
+			print("⚠️ No data found in itemList.")
+			return pd.DataFrame()
+
+		# Process and convert timestamps
+		rows = []
+		for item in items:
+			try:
+				# Convert timestamps from UTC to CET
+				utc_from = datetime.fromisoformat(item['timeInterval']['from'].replace('Z', '+00:00'))
+				utc_to = datetime.fromisoformat(item['timeInterval']['to'].replace('Z', '+00:00'))
+
+				cet_from = utc_from.astimezone(cet_timezone)
+				cet_to = utc_to.astimezone(cet_timezone)
+
+				# Store in formatted string
+				time_period = f"{cet_from.strftime('%Y-%m-%d %H:%M:%S')} - {cet_to.strftime('%Y-%m-%d %H:%M:%S')}"
+
+				# ✅ Correct field names
+				unintended_import = float(item.get("estimatedUnintendedDeviationINArea", 0) or 0)
+				unintended_export = float(item.get("estimatedUnintendedDeviationOUTArea", 0) or 0)
+
+				# Debugging - Print all added records
+				print(f"ADDING: {time_period} | IN: {unintended_import}, OUT: {unintended_export}")
+
+				# Store processed row
+				rows.append([cet_from, unintended_import, unintended_export])
+
+			except Exception as e:
+				print(f"❌ Error processing record: {e}")
+
+		# Convert to DataFrame
+		df_unintended_deviation = pd.DataFrame(rows, columns=['Timestamp', 'Unintended_Import (MW)', 'Unintended_Export (MW)'])
+
+		# Ensure Timestamp is properly formatted in CET
+		df_unintended_deviation['Timestamp'] = pd.to_datetime(df_unintended_deviation['Timestamp']).dt.tz_localize(None)
+
+		return df_unintended_deviation
+
+	except Exception as e:
+		print(f"❌ JSON Parsing Error: {e}")
+		return pd.DataFrame()
+
 # Function to build the balancing market context in EET==========================================
 def build_balancing_market_context_eet():
     # Fetching the core inputs
@@ -527,6 +604,7 @@ def build_balancing_market_context_eet():
     df_imbalance_prices = fetch_intraday_imbalance_prices()
     df_imbalance = create_combined_imbalance_dataframe(df_imbalance_prices, df_imbalance_volumes)
     df_igcc = fetch_igcc_netting_flows()
+    df_unintended_deviation = fetch_unintended_deviation_data()
     activation_df = fetch_balancing_energy_data()
     price_df = fetch_marginal_prices()
     # Merge and display
@@ -547,7 +625,7 @@ def build_balancing_market_context_eet():
     df_igcc["Timestamp"] = pd.to_datetime(df_igcc["Timestamp"]).dt.tz_localize("Europe/Bucharest", ambiguous="NaT", nonexistent="shift_forward").dt.tz_localize(None)
 
     df_final = pd.merge(df_final, df_igcc, on="Timestamp", how="left")
-
+    df_final = pd.merge(df_final, df_unintended_deviation, on="Timestamp", how="left")
     # --- Step 5: Final cleanup ---
     df_final = df_final.sort_values("Timestamp").reset_index(drop=True)
 
@@ -1081,6 +1159,7 @@ st.write(fetch_intraday_imbalance_prices())
 st.write(fetch_igcc_netting_flows())
 df_context = build_balancing_market_context_eet()
 st.dataframe(df_context)
+st.dataframe(fetch_unintended_deviation_data())
 
 def test_o3_mini_connectivity():
     from openai import OpenAI
