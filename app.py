@@ -345,9 +345,9 @@ def fetch_igcc_netting_flows():
 
 		if not rows:
 			print("⚠️ No valid IGCC data rows processed.")
-			return pd.DataFrame(columns=["Timestamp", "IGCC Import (MW)", "IGCC Export (MW)"])
+			return pd.DataFrame(columns=["Timestamp", "IGCC Import (MWh)", "IGCC Export (MWh)"])
 
-		df = pd.DataFrame(rows, columns=["Timestamp", "IGCC Import (MW)", "IGCC Export (MW)"])
+		df = pd.DataFrame(rows, columns=["Timestamp", "IGCC Import (MWh)", "IGCC Export (MWh)"])
 		# Ensure Timestamp column is datetime and remove timezone for consistency if needed later
 		df["Timestamp"] = pd.to_datetime(df["Timestamp"]).dt.tz_localize(None)+timedelta(minutes=15)
 
